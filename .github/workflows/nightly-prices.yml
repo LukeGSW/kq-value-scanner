@@ -101,6 +101,15 @@ jobs:
           fi
 
       # --------------------------------------------------------------
+      # 1b) Init SQLite schema + import universo nel DB
+      #     (genera storage/kq.sqlite se non presente e popola tabella
+      #      `universe` leggendo storage/universe.parquet)
+      # --------------------------------------------------------------
+      - name: Init SQLite schema + load universe
+        run: |
+          python -m pipeline.storage.db --init --load-universe --stats
+
+      # --------------------------------------------------------------
       # 2) Fetch prezzi
       #    mode=incremental → bulk EOD del giorno (senza flag)
       #    mode=full        → backfill storico 10Y (--backfill)
