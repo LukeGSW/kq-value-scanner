@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>KQ Value Scanner · Ticker</title>
+<meta name="description" content="Scheda di dettaglio ticker del KQ Value Scanner: fondamentali, qualità dei flussi di cassa, solidità, grafico 10Y, diagnostica e scores proprietari.">
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+<!-- KQ stylesheet condiviso -->
+<link rel="stylesheet" href="assets/css/kq.css">
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="brand">
+    <div class="brand-mark">KQ</div>
+    <span>Kriterion Quant</span>
+    <span class="brand-sep">/</span>
+    <span class="brand-sub">Value Scanner</span>
+  </div>
+  <div class="nav-actions">
+    <a href="index.html" class="nav-link">← Screener</a>
+    <a href="#" class="nav-link">Metodologia</a>
+    <a href="#" class="nav-link">Glossario</a>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- Loading / error overlays -->
+  <div id="loadingBox" class="loading">Caricamento dati ticker…</div>
+  <div id="errorBox" class="error" style="display:none"></div>
+
+  <!-- Contenuto pagina (nascosto finché il JSON non è caricato) -->
+  <div id="pageBody" style="display:none">
+
+    <!-- ==========================================================
+         HERO
+         ========================================================== -->
+    <section class="hero">
+      <div class="hero-left">
+        <h1>
+          <span id="tickerBadge" class="ticker-badge">—</span>
+          <span id="companyName" class="company-name"></span>
+        </h1>
+        <div id="heroMeta" class="hero-meta"></div>
+      </div>
+      <div class="hero-right">
+        <div id="heroPrice" class="price">—</div>
+        <div id="heroDelta" class="price-delta">—</div>
+        <div id="heroSub" class="price-sub"></div>
+      </div>
+    </section>
+
+    <!-- ==========================================================
+         SNAPSHOT — 7 card di valutazione sintetica
+         ========================================================== -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <span class="section-marker"></span>
+          Snapshot valutativo
+        </div>
+        <div class="section-sub">Multipli correnti · qualità del dividendo · PE storico</div>
+      </div>
+      <div class="explainer">
+        Sintesi dei principali multipli di valutazione del titolo. <strong>PE</strong> e
+        <strong>Forward PE</strong> mostrano il prezzo rispetto agli utili trailing e
+        stimati; <strong>PEG</strong> incrocia PE con la crescita attesa; <em>PE %ile 5Y</em>
+        indica dove si colloca oggi il PE rispetto agli ultimi 5 anni di storia.
+      </div>
+      <div id="snapshotGrid" class="snapshot-grid"></div>
+    </section>
+
+    <!-- ==========================================================
+         CASH & DEBT
+         ========================================================== -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <span class="section-marker"></span>
+          Cassa, debito e solidità finanziaria
+        </div>
+        <div class="section-sub">Liquidità · struttura del debito · capacità di rimborso</div>
+      </div>
+      <div class="explainer">
+        Le metriche di solidità sono il filtro più importante in un approccio <em>value</em>:
+        permettono di escludere società che appaiono "a sconto" semplicemente perché
+        finanziariamente fragili. Coerenza delle soglie: <strong>verde</strong> = sano,
+        <strong>giallo</strong> = attenzione, <strong>rosso</strong> = rischio.
+      </div>
+
+      <div class="cash-debt-banner">
+        <div class="cd-card cash">
+          <div class="cd-label">Cassa totale</div>
+          <div id="cdCash" class="cd-value mono">—</div>
+          <div class="cd-sub">Cash + equivalenti + short-term investments</div>
+        </div>
+        <div class="cd-card debt">
+          <div class="cd-label">Debito totale</div>
+          <div id="cdDebt" class="cd-value mono">—</div>
+          <div class="cd-sub">Short-term debt + long-term debt</div>
+        </div>
+        <div class="cd-card net">
+          <div class="cd-label">Debito netto</div>
+          <div id="cdNet" class="cd-value mono">—</div>
+          <div class="cd-sub">Debito totale − cassa. Valori negativi = net cash position</div>
+        </div>
+      </div>
+
+      <div id="cashDebtGrid" class="metric-grid grid-4"></div>
+
+      <div class="chart-sub" style="margin-top:18px">
+        <div class="chart-sub-title">
+          <span>Trend del debito netto · ultimi 5 anni</span>
+        </div>
+        <div class="chart-canvas">
+          <canvas id="netDebtTrend"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================================
+         CASHFLOW QUALITY
+         ========================================================== -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <span class="section-marker"></span>
+          Qualità dei flussi di cassa
+        </div>
+        <div class="section-sub">OCF · FCF · CapEx intensity</div>
+      </div>
+      <div class="explainer">
+        <strong>Gli utili sono un'opinione, la cassa è un fatto.</strong> Un gap sistematico
+        fra utile netto e cassa operativa è spesso un campanello d'allarme sulla qualità
+        degli accrual. Il <em>Free Cash Flow</em> è la cassa <strong>realmente disponibile</strong>
+        per dividendi, buyback e riduzione del debito.
+      </div>
+      <div id="cashflowQualityGrid" class="metric-grid grid-4"></div>
+    </section>
+
+    <!-- ==========================================================
+         PROFITABILITY
+         ========================================================== -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <span class="section-marker"></span>
+          Redditività e ritorni sul capitale
+        </div>
+        <div class="section-sub">ROE · ROA · ROIC · marginalità</div>
+      </div>
+      <div class="explainer">
+        I ritorni sul capitale misurano quanto <strong>valore</strong> il business crea per
+        ogni euro investito. Un'azienda di qualità mantiene nel tempo un <em>ROIC</em>
+        significativamente superiore al costo del capitale (<em>WACC</em>).
+      </div>
+      <div id="profitabilityGrid" class="metric-grid grid-4"></div>
+    </section>
+
+    <!-- ==========================================================
+         PRICE CHART — candles + volume + z-score
+         ========================================================== -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <span class="section-marker"></span>
+          Grafico prezzi · 10 anni
+        </div>
+        <div class="section-sub">Candele giornaliere · SMA 50 / 200 · z-score 90 · earnings markers</div>
+      </div>
+      <div class="chart-main">
+        <div class="chart-toolbar">
+          <div class="toolbar-left">
+            <span class="tb-chip sma50"><span class="tb-legend-dot"></span>SMA 50</span>
+            <span class="tb-chip sma200"><span class="tb-legend-dot"></span>SMA 200</span>
+            <span class="tb-chip earnings"><span class="tb-legend-dot"></span>Earnings</span>
+          </div>
+        </div>
+
+        <div id="priceChart"></div>
+        <div id="volumeChart"></div>
+        <div id="zscoreChart"></div>
+
+        <div class="explainer" style="margin-top:14px;margin-bottom:0">
+          Le <strong>bande ±2σ</strong> sul pannello z-score identificano condizioni di
+          stretch statistico sui log-returns a 90 giorni: utili per timing di entrate
+          contrarian su titoli con fondamentali solidi.
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================================
+         DIAGNOSTICS — drawdown, HV, relative strength
+         ========================================================== -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <span class="section-marker"></span>
+          Diagnostica tecnica
+        </div>
+        <div class="section-sub">Drawdown · Historical Volatility · Relative Strength</div>
+      </div>
+      <div class="metric-grid grid-3">
+        <div class="chart-sub">
+          <div id="ddTitle" class="chart-sub-title"><span>Drawdown from ATH</span><span class="val">—</span></div>
+          <div class="chart-canvas"><canvas id="ddChart"></canvas></div>
+        </div>
+        <div class="chart-sub">
+          <div id="hvTitle" class="chart-sub-title"><span>Historical Volatility 20</span><span class="val">—</span></div>
+          <div class="chart-canvas"><canvas id="hvChart"></canvas></div>
+        </div>
+        <div class="chart-sub">
+          <div id="rsTitle" class="chart-sub-title"><span>Relative Strength 6m</span><span class="val">—</span></div>
+          <div class="chart-canvas"><canvas id="rsChart"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================================
+         SEASONALITY
+         ========================================================== -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <span class="section-marker"></span>
+          Stagionalità mensile
+        </div>
+        <div class="section-sub">Return medio per mese · ultimi 10 anni + media</div>
+      </div>
+      <div class="explainer">
+        Ogni cella mostra il <strong>return aritmetico</strong> del titolo in quel mese. L'ultima
+        riga <em>AVG</em> aggrega la media mensile sugli anni disponibili: utile per
+        individuare finestre storicamente favorevoli o sfavorevoli.
+      </div>
+      <div id="heatmap" class="heatmap"></div>
+    </section>
+
+    <!-- ==========================================================
+         SCORES PROPRIETARI
+         ========================================================== -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <span class="section-marker"></span>
+          Scores proprietari
+        </div>
+        <div class="section-sub">Altman Z · Piotroski F · Beneish M</div>
+      </div>
+      <div id="scoresGrid" class="score-grid"></div>
+    </section>
+
+    <!-- ==========================================================
+         KQ VALUE SCORE composito + rank
+         ========================================================== -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <span class="section-marker"></span>
+          KQ Value Score
+        </div>
+        <div class="section-sub">Composito 0–100 · pesi 40/25/20/15</div>
+      </div>
+      <div id="kqScoreBox"></div>
+    </section>
+
+    <!-- ==========================================================
+         AI READ
+         ========================================================== -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <span class="section-marker"></span>
+          Lettura algoritmica
+        </div>
+        <div class="section-sub">Sintesi strutturata dei dati quantitativi</div>
+      </div>
+      <div id="aiReadBox"></div>
+    </section>
+
+  </div><!-- /#pageBody -->
+
+  <footer>
+    <b>Kriterion Quant · Value Scanner</b> · dati
+    <a href="https://eodhd.com" target="_blank" rel="noopener">EODHD</a>
+    · aggiornamento notturno prezzi / settimanale fundamentals · <span class="mono">v0.1.0</span>
+    <br>
+    Le informazioni presentate sono a scopo formativo e non costituiscono raccomandazione
+    di investimento.
+  </footer>
+</div>
+
+<!-- TradingView Lightweight Charts -->
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<!-- KQ JS -->
+<script src="assets/js/formatters.js"></script>
+<script src="assets/js/ticker.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,173 @@
+# ==============================================================================
+# KQ Value Scanner - Configurazione principale
+# ==============================================================================
+# Tutti i parametri operativi del sistema. Modificabili senza toccare il codice.
+# Convenzione: valori monetari in USD, percentuali come frazione (0.15 = 15%).
+
+project:
+  name: "Kriterion Quant Value Scanner"
+  short_name: "kq-value-scanner"
+  version: "0.1.0"
+  language: "it"
+
+# ------------------------------------------------------------------------------
+# Universo investibile
+# ------------------------------------------------------------------------------
+universe:
+  # Soglia MarketCap in USD (convertita per Europa)
+  marketcap_min_usd: 2000000000           # $2B entry threshold
+  marketcap_exit_usd: 1600000000          # $1.6B exit threshold (anti-flickering)
+
+  # Tipi di strumento da includere/escludere
+  exclude_types:
+    - "ETF"
+    - "Fund"
+    - "REIT"
+    - "Preferred Stock"
+
+  # Include ADRs (es. BABA, TSM su NYSE/NASDAQ)
+  include_adrs: true
+
+  # Exchange USA
+  exchanges_us:
+    - code: "US"                          # EODHD composite code
+      name: "NYSE/NASDAQ/AMEX"
+      currency: "USD"
+      country: "USA"
+      benchmark: "SPY.US"
+
+  # Exchange Europa
+  exchanges_eu:
+    - code: "LSE"
+      name: "London Stock Exchange"
+      currency: "GBP"
+      country: "UK"
+      benchmark: "VUKE.LSE"               # FTSE 100 ETF
+    - code: "XETRA"
+      name: "Xetra Deutsche Börse"
+      currency: "EUR"
+      country: "Germany"
+      benchmark: "EXS1.XETRA"             # DAX ETF
+    - code: "PA"
+      name: "Euronext Paris"
+      currency: "EUR"
+      country: "France"
+      benchmark: "CAC.PA"
+    - code: "AS"
+      name: "Euronext Amsterdam"
+      currency: "EUR"
+      country: "Netherlands"
+      benchmark: "AEX.AS"
+    - code: "BR"
+      name: "Euronext Brussels"
+      currency: "EUR"
+      country: "Belgium"
+      benchmark: "BEL20.BR"
+    - code: "MI"
+      name: "Borsa Italiana"
+      currency: "EUR"
+      country: "Italy"
+      benchmark: "FTSEMIB.MI"
+    - code: "SW"
+      name: "SIX Swiss Exchange"
+      currency: "CHF"
+      country: "Switzerland"
+      benchmark: "SMI.SW"
+
+# ------------------------------------------------------------------------------
+# API EODHD
+# ------------------------------------------------------------------------------
+eodhd:
+  # API key viene letta da env var EODHD_API_KEY o da Colab userdata
+  # NON inserire la chiave qui.
+  base_url: "https://eodhd.com/api"
+
+  # Rate limiting prudenziale (piano All-World Extended: 1000 req/min)
+  rate_limit_per_min: 900
+  request_timeout_sec: 30
+
+  # Retry policy
+  max_retries: 4
+  retry_backoff_base_sec: 1.5             # exponential: 1.5, 2.25, 3.37, 5.06
+
+  # Budget giornaliero crediti (piano All-World Extended: 100k calls/day)
+  daily_budget_credits: 100000
+  alert_budget_pct: 0.80                  # warning se supera 80% del budget
+
+# ------------------------------------------------------------------------------
+# Pipeline scheduling
+# ------------------------------------------------------------------------------
+scheduling:
+  prices_cron: "0 2 * * *"                # Ogni notte alle 02:00 UTC
+  fundamentals_cron: "0 4 * * 6"          # Sabato alle 04:00 UTC
+  screener_rebuild_cron: "0 3 * * *"      # Ogni notte alle 03:00 UTC (dopo prezzi)
+
+# ------------------------------------------------------------------------------
+# Storage
+# ------------------------------------------------------------------------------
+storage:
+  backend: "sqlite"                       # sqlite | parquet
+  db_path: "pipeline/storage/db/kq_scanner.db"
+  parquet_root: "pipeline/storage/parquet"
+  retention_years: 10                     # fundamentals history
+
+# ------------------------------------------------------------------------------
+# Calcolo metriche
+# ------------------------------------------------------------------------------
+compute:
+  # Analisi tecnica
+  sma_short: 50
+  sma_long: 200
+  zscore_window: 90                       # SMA 90 su log returns
+  hv_window: 20                           # Historical Volatility 20 periodi
+  hv_annualization_factor: 252            # trading days
+  rs_window: 126                          # Relative Strength 6m (~126 td)
+
+  # Valuation
+  pe_percentile_lookback_years: 5
+  peg_max_threshold: 2.0                  # flag warning
+  fwd_pe_max_threshold: 40.0
+
+  # Cash & Debt soglie (per flag color-coding)
+  net_debt_ebitda:
+    healthy: 2.0
+    warning: 4.0
+  interest_coverage:
+    healthy: 5.0
+    warning: 2.0
+  current_ratio:
+    healthy: 1.5
+    warning: 1.0
+
+  # Quality filters (flag anti value-trap, NON hard filter)
+  quality:
+    roic_min: 0.08                        # 8%
+    revenue_growth_min: 0.0
+    fcf_positive_quarters: 4
+
+  # Composite scores thresholds
+  altman_z:
+    safe: 3.0
+    grey: 1.8
+  piotroski_f:
+    strong: 7
+    weak: 3
+  beneish_m:
+    clean: -2.22
+
+# ------------------------------------------------------------------------------
+# Output
+# ------------------------------------------------------------------------------
+output:
+  screener_json: "site/data/screener.json"
+  tickers_dir: "site/data/tickers"
+  pretty_json: false                      # false = minificato per peso
+  max_ticker_pages: 2500                  # limite di sicurezza
+
+# ------------------------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------------------------
+logging:
+  level: "INFO"                           # DEBUG | INFO | WARNING | ERROR
+  log_file: "logs/pipeline.log"
+  log_rotation_days: 14

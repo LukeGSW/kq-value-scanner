@@ -1,0 +1,36 @@
+# ==============================================================================
+# KQ Value Scanner - Dipendenze Python
+# ==============================================================================
+# Versioni pinnate per riproducibilità. Aggiornare in modo coordinato.
+
+# --- HTTP client e API ---
+requests>=2.31.0,<3.0.0
+tenacity>=8.2.0,<9.0.0                 # Retry con backoff esponenziale
+
+# --- Data handling ---
+pandas>=2.1.0,<3.0.0
+numpy>=1.26.0,<2.0.0
+pyarrow>=14.0.0,<17.0.0                # Parquet I/O
+
+# --- Configurazione ---
+pyyaml>=6.0,<7.0
+python-dotenv>=1.0.0,<2.0.0            # Lettura .env in sviluppo locale
+
+# --- Storage ---
+# SQLite è built-in in Python stdlib, nessuna dipendenza extra
+
+# --- Logging e utility ---
+rich>=13.7.0,<14.0.0                   # Logging colorato, utility CLI
+
+# --- Analisi statistica (per zScore, HV, seasonality) ---
+scipy>=1.11.0,<2.0.0
+
+# --- Testing ---
+pytest>=7.4.0,<9.0.0
+pytest-mock>=3.12.0,<4.0.0
+
+# ==============================================================================
+# Nota: il frontend è HTML/JS vanilla con CDN esterni
+# (Chart.js, TradingView Lightweight Charts, DataTables), nessuna
+# dipendenza Python per quello.
+# ==============================================================================

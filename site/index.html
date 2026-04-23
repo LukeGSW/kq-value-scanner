@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>KQ Value Scanner · Kriterion Quant</title>
+<meta name="description" content="Screener quantitativo value — Large e Mid Cap USA ed Europa. Focus su PE, Forward PE, solidità finanziaria e qualità dei flussi di cassa.">
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+<!-- DataTables (dark theme: usiamo override custom in kq.css) -->
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
+
+<!-- KQ stylesheet -->
+<link rel="stylesheet" href="assets/css/kq.css">
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="brand">
+    <div class="brand-mark">KQ</div>
+    <span>Kriterion Quant</span>
+    <span class="brand-sep">/</span>
+    <span class="brand-sub">Value Scanner</span>
+  </div>
+  <div class="nav-actions">
+    <a href="index.html" class="nav-link">Screener</a>
+    <a href="#" class="nav-link">Metodologia</a>
+    <a href="#" class="nav-link">Glossario</a>
+  </div>
+</nav>
+
+<div class="container">
+
+  <section class="index-hero">
+    <h1>KQ Value Scanner</h1>
+    <p>
+      Screener quantitativo focalizzato su <b>PE</b> e <b>Forward PE</b> favorevoli,
+      filtrato per qualità finanziaria (<b>Cassa / Debito</b>, <b>Altman Z</b>,
+      <b>Piotroski F</b>, <b>Beneish M</b>) e segnali tecnici (<b>SMA 50/200</b>,
+      <b>zScore 90</b>, <b>Relative Strength</b>). Universo: Large + Mid Cap USA ed
+      Europa (Market Cap &gt; <span class="mono">$2B</span>). Aggiornamento
+      notturno dei prezzi e settimanale dei fundamentals. Clicca sul ticker per
+      la scheda di dettaglio.
+    </p>
+
+    <div class="summary-stats" id="summaryStats">
+      <div class="stat-card"><div class="stat-label">Ticker</div><div class="stat-value mono">—</div></div>
+      <div class="stat-card"><div class="stat-label">Exchange</div><div class="stat-value mono">—</div></div>
+      <div class="stat-card"><div class="stat-label">Settori</div><div class="stat-value mono">—</div></div>
+      <div class="stat-card"><div class="stat-label">Build</div><div class="stat-value mono">—</div></div>
+    </div>
+  </section>
+
+  <div class="filters">
+    <label for="exchangeFilter">Exchange</label>
+    <select id="exchangeFilter"><option value="">Tutti</option></select>
+
+    <label for="sectorFilter">Settore</label>
+    <select id="sectorFilter"><option value="">Tutti</option></select>
+
+    <div class="spacer"></div>
+
+    <span style="font-size:11px;color:var(--text-muted)">
+      Ordinato di default per <b style="color:var(--text-secondary)">KQ Value Score</b>
+      decrescente · clic sulle intestazioni per cambiare ordinamento.
+    </span>
+  </div>
+
+  <div class="dt-wrapper">
+    <div id="loadingBox" class="loading">Caricamento dati dello screener…</div>
+    <div id="errorBox" class="error" style="display:none"></div>
+    <table id="screenerTable" class="kq-table display" style="width:100%">
+      <thead></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <footer>
+    <b>Kriterion Quant · Value Scanner</b> · dati <a href="https://eodhd.com" target="_blank" rel="noopener">EODHD</a>
+    · aggiornamento notturno prezzi / settimanale fundamentals · <span class="mono">v0.1.0</span>
+    <br>
+    Le informazioni presentate sono a scopo formativo e non costituiscono raccomandazione di investimento.
+  </footer>
+</div>
+
+<!-- jQuery + DataTables -->
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+
+<!-- KQ JS -->
+<script src="assets/js/formatters.js"></script>
+<script src="assets/js/index.js"></script>
+
+</body>
+</html>

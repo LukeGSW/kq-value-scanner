@@ -1,0 +1,43 @@
+"""Modulo storage — gestione database locale (SQLite)."""
+
+from pipeline.storage.db import (
+    get_connection,
+    init_schema,
+    get_db_path,
+    load_universe_from_parquet,
+    upsert_universe,
+    upsert_prices_bulk,
+    upsert_fundamentals_snapshot,
+    upsert_financials_history,
+    upsert_computed_metrics,
+    save_screener_snapshot,
+    log_fetch,
+    get_universe,
+    get_prices,
+    get_last_price_date,
+    get_tickers_without_history,
+    get_table_stats,
+    vacuum,
+    analyze,
+)
+
+__all__ = [
+    "get_connection",
+    "init_schema",
+    "get_db_path",
+    "load_universe_from_parquet",
+    "upsert_universe",
+    "upsert_prices_bulk",
+    "upsert_fundamentals_snapshot",
+    "upsert_financials_history",
+    "upsert_computed_metrics",
+    "save_screener_snapshot",
+    "log_fetch",
+    "get_universe",
+    "get_prices",
+    "get_last_price_date",
+    "get_tickers_without_history",
+    "get_table_stats",
+    "vacuum",
+    "analyze",
+]
