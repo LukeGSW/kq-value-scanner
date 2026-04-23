@@ -1,18 +1,8 @@
-# ============================================================================
-# KQ Value Scanner · Weekly fundamentals pipeline
-# ----------------------------------------------------------------------------
-# Scope: aggiornamento settimanale dei fundamentals (snapshot + storico finanziario)
-# + ricalcolo di tutte le metriche derivate (cash/debt, profitability, valuation,
-# scores, seasonality) + rigenerazione dei JSON.
-#
-# Frequenza: domenica 06:00 UTC (weekend, meno pressione sui credits EODHD).
-# Manuale: workflow_dispatch con `mode` (incremental|full) e `exchange`.
-# ============================================================================
 name: Weekly fundamentals
 
 on:
   schedule:
-    - cron: "0 6 * * 0"   # ogni domenica 06:00 UTC
+    - cron: "0 6 * * 0"
   workflow_dispatch:
     inputs:
       mode:
@@ -29,7 +19,6 @@ on:
         default: ""
         type: string
 
-# Nessuna sovrapposizione con la pipeline notturna dei prezzi.
 concurrency:
   group: kq-pipeline
   cancel-in-progress: false
@@ -45,7 +34,6 @@ jobs:
 
     env:
       EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
-      KQ_DB_PATH: ${{ github.workspace }}/storage/kq.sqlite
       PYTHONUNBUFFERED: "1"
       TZ: "UTC"
 
@@ -67,47 +55,31 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # --------------------------------------------------------------
-      # Restore SQLite cache
-      # --------------------------------------------------------------
-      - name: Restore SQLite cache
+      - name: Restore DB cache
         uses: actions/cache@v4
         with:
-          path: storage/kq.sqlite
-          key: kq-sqlite-${{ runner.os }}-${{ github.run_id }}
+          path: pipeline/storage/db
+          key: kq-db-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            kq-sqlite-${{ runner.os }}-
+            kq-db-${{ runner.os }}-
 
-      - name: Ensure storage/site dirs
+      - name: Ensure dirs
         run: |
-          mkdir -p storage site/data site/data/tickers
+          mkdir -p pipeline/storage/db docs/data docs/data/tickers
 
-      # --------------------------------------------------------------
-      # 1) Universe · in weekly mode ricostruiamo sempre
-      # --------------------------------------------------------------
       - name: Rebuild universe
         env:
           EXCH: ${{ github.event.inputs.exchange || '' }}
         run: |
-          ARGS="--output storage/universe.parquet -v"
+          ARGS="-v"
           if [[ -n "$EXCH" ]]; then ARGS="$ARGS --exchange $EXCH"; fi
           echo "Running: python -m pipeline.fetch.fetch_universe $ARGS"
           python -m pipeline.fetch.fetch_universe $ARGS
 
-      # --------------------------------------------------------------
-      # 1b) Init SQLite schema + import universo nel DB
-      #     (genera storage/kq.sqlite se non presente e popola tabella
-      #      `universe` leggendo storage/universe.parquet)
-      # --------------------------------------------------------------
       - name: Init SQLite schema + load universe
         run: |
           python -m pipeline.storage.db --init --load-universe --stats
 
-      # --------------------------------------------------------------
-      # 2) Fetch fundamentals (snapshot + storico finanziario)
-      #    Nota: fetch_fundamentals è sempre incrementale (salta i ticker
-      #    già aggiornati nella finestra di refresh configurata).
-      # --------------------------------------------------------------
       - name: Fetch fundamentals
         env:
           EXCH: ${{ github.event.inputs.exchange || '' }}
@@ -117,36 +89,25 @@ jobs:
           echo "Running: python -m pipeline.fetch.fetch_fundamentals $ARGS"
           python -m pipeline.fetch.fetch_fundamentals $ARGS
 
-      # --------------------------------------------------------------
-      # 3) Ricalcolo COMPLETO di tutte le metriche derivate.
-      #    (tech + cash/debt + profitability + valuation + scores +
-      #     seasonality, orchestrato da compute.screener)
-      # --------------------------------------------------------------
       - name: Compute all derived metrics
         run: |
           python -m pipeline.compute.screener --all -v
 
-      # --------------------------------------------------------------
-      # 4) Rigenera JSON screener + per-ticker (tutti)
-      # --------------------------------------------------------------
       - name: Rebuild screener.json
         run: |
           python -m pipeline.generate.build_screener_json \
-            --output site/data/screener.json --minify
+            --output docs/data/screener.json --minify
 
       - name: Rebuild per-ticker JSON pages (full)
         run: |
           python -m pipeline.generate.build_ticker_pages \
-            --output-dir site/data/tickers --minify
+            --output-dir docs/data/tickers --minify
 
-      # --------------------------------------------------------------
-      # 5) Commit & push JSON aggiornati
-      # --------------------------------------------------------------
       - name: Commit updated JSON
         run: |
           git config user.name  "kq-bot"
           git config user.email "kq-bot@users.noreply.github.com"
-          git add site/data/screener.json site/data/tickers/
+          git add docs/data/screener.json docs/data/tickers/
           if git diff --cached --quiet; then
             echo "Nessun cambiamento nei JSON · nulla da committare"
           else
@@ -155,21 +116,16 @@ jobs:
             git push
           fi
 
-      # --------------------------------------------------------------
-      # 6) Report artifacts
-      # --------------------------------------------------------------
       - name: Export fetch_log summary
         if: always()
         run: |
           python - <<'PY'
           import sqlite3, os, json, pathlib
-          db = os.environ.get("KQ_DB_PATH","storage/kq.sqlite")
+          db = "pipeline/storage/db/kq_scanner.db"
           if not os.path.exists(db):
               print("DB missing, skip"); raise SystemExit(0)
           con = sqlite3.connect(db)
-          rows = con.execute(
-              "SELECT * FROM fetch_log ORDER BY started_at DESC LIMIT 40"
-          ).fetchall()
+          rows = con.execute("SELECT * FROM fetch_log ORDER BY started_at DESC LIMIT 40").fetchall()
           cols = [c[0] for c in con.execute("SELECT * FROM fetch_log LIMIT 0").description]
           out = [dict(zip(cols,r)) for r in rows]
           pathlib.Path("fetch_log_tail.json").write_text(json.dumps(out,default=str,indent=2))
@@ -183,6 +139,6 @@ jobs:
           name: weekly-fundamentals-logs-${{ github.run_id }}
           path: |
             fetch_log_tail.json
-            storage/kq.sqlite
+            pipeline/storage/db/kq_scanner.db
           retention-days: 14
           if-no-files-found: warn
