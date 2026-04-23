@@ -129,7 +129,7 @@ jobs:
       # --------------------------------------------------------------
       - name: Compute technical metrics
         run: |
-          python -m pipeline.compute.screener --only technical -v
+          python -m pipeline.compute.screener -v
 
       # --------------------------------------------------------------
       # 4) Rigenera JSON screener + per-ticker pages
