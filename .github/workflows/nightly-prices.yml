@@ -1,0 +1,182 @@
+# ============================================================================
+# KQ Value Scanner · Nightly prices pipeline
+# ----------------------------------------------------------------------------
+# Scope: aggiornamento notturno dei prezzi + ricalcolo delle metriche tecniche
+# (SMA, zScore, HV, drawdown, RS) + rigenerazione dei JSON dello screener e
+# delle pagine ticker.
+#
+# Frequenza: Lun-Ven alle 04:00 UTC (mercati USA già chiusi + margine).
+# Manuale: workflow_dispatch con `mode` (incremental|full) e `exchange`.
+# ============================================================================
+name: Nightly prices
+
+on:
+  schedule:
+    # Martedì-Sabato 04:00 UTC (copre le chiusure Lun-Ven negli US/EU)
+    - cron: "0 4 * * 2-6"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Fetch mode (incremental|full)"
+        required: true
+        default: "incremental"
+        type: choice
+        options:
+          - incremental
+          - full
+      exchange:
+        description: "Exchange filter (es. US, LSE, XETRA). Vuoto = tutti."
+        required: false
+        default: ""
+        type: string
+
+# Evita esecuzioni parallele: la pipeline scrive sullo stesso DB/JSON.
+concurrency:
+  group: kq-pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # push dei JSON rigenerati
+
+jobs:
+  prices:
+    name: Fetch prices · compute tech · rebuild JSON
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    env:
+      EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+      KQ_DB_PATH: ${{ github.workspace }}/storage/kq.sqlite
+      PYTHONUNBUFFERED: "1"
+      TZ: "UTC"
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # --------------------------------------------------------------
+      # Ripristino dello stato: scarichiamo l'ultima SQLite cache come
+      # artifact del run precedente (se esiste). Il DB NON è versionato.
+      # --------------------------------------------------------------
+      - name: Restore SQLite cache
+        id: restore-db
+        uses: actions/cache@v4
+        with:
+          path: storage/kq.sqlite
+          key: kq-sqlite-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            kq-sqlite-${{ runner.os }}-
+
+      - name: Ensure storage/universe dirs
+        run: |
+          mkdir -p storage site/data site/data/tickers
+
+      # --------------------------------------------------------------
+      # 1) Universe · soltanto se mancante o mode=full
+      # --------------------------------------------------------------
+      - name: Build universe (if missing or mode=full)
+        env:
+          MODE: ${{ github.event.inputs.mode || 'incremental' }}
+        run: |
+          if [[ "$MODE" == "full" ]] || [[ ! -f storage/universe.parquet ]]; then
+            echo "::group::Rebuild universe"
+            python -m pipeline.fetch.fetch_universe --output storage/universe.parquet -v
+            echo "::endgroup::"
+          else
+            echo "Universe già presente · skip"
+          fi
+
+      # --------------------------------------------------------------
+      # 2) Fetch prezzi
+      # --------------------------------------------------------------
+      - name: Fetch daily prices
+        env:
+          MODE: ${{ github.event.inputs.mode || 'incremental' }}
+          EXCH: ${{ github.event.inputs.exchange || '' }}
+        run: |
+          ARGS="--mode $MODE -v"
+          if [[ -n "$EXCH" ]]; then ARGS="$ARGS --exchange $EXCH"; fi
+          echo "Running: python -m pipeline.fetch.fetch_prices $ARGS"
+          python -m pipeline.fetch.fetch_prices $ARGS
+
+      # --------------------------------------------------------------
+      # 3) Ricalcolo metriche tecniche (SMA, zScore, HV, DD, RS)
+      # --------------------------------------------------------------
+      - name: Compute technical metrics
+        run: |
+          python -m pipeline.compute.screener --only technical -v
+
+      # --------------------------------------------------------------
+      # 4) Rigenera JSON screener + per-ticker pages
+      # --------------------------------------------------------------
+      - name: Rebuild screener.json
+        run: |
+          python -m pipeline.generate.build_screener_json \
+            --output site/data/screener.json --minify
+
+      - name: Rebuild per-ticker JSON pages
+        run: |
+          python -m pipeline.generate.build_ticker_pages \
+            --output-dir site/data/tickers --minify
+
+      # --------------------------------------------------------------
+      # 5) Commit & push dei JSON aggiornati (se cambiati)
+      # --------------------------------------------------------------
+      - name: Commit updated JSON
+        run: |
+          git config user.name  "kq-bot"
+          git config user.email "kq-bot@users.noreply.github.com"
+          git add site/data/screener.json site/data/tickers/
+          if git diff --cached --quiet; then
+            echo "Nessun cambiamento nei JSON · nulla da committare"
+          else
+            TS=$(date -u '+%Y-%m-%d %H:%M UTC')
+            git commit -m "chore(data): nightly prices refresh · $TS"
+            git push
+          fi
+
+      # --------------------------------------------------------------
+      # 6) Report artifacts (logs + fetch_log table dump)
+      # --------------------------------------------------------------
+      - name: Export fetch_log summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import sqlite3, os, json, pathlib
+          db = os.environ.get("KQ_DB_PATH","storage/kq.sqlite")
+          if not os.path.exists(db):
+              print("DB missing, skip"); raise SystemExit(0)
+          con = sqlite3.connect(db)
+          rows = con.execute(
+              "SELECT * FROM fetch_log ORDER BY started_at DESC LIMIT 20"
+          ).fetchall()
+          cols = [c[0] for c in con.execute("SELECT * FROM fetch_log LIMIT 0").description]
+          out = [dict(zip(cols,r)) for r in rows]
+          pathlib.Path("fetch_log_tail.json").write_text(json.dumps(out,default=str,indent=2))
+          print(f"Exported {len(out)} rows")
+          PY
+
+      - name: Upload logs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-prices-logs-${{ github.run_id }}
+          path: |
+            fetch_log_tail.json
+            storage/kq.sqlite
+          retention-days: 7
+          if-no-files-found: warn
