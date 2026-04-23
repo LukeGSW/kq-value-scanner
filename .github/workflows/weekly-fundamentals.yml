@@ -124,7 +124,7 @@ jobs:
       # --------------------------------------------------------------
       - name: Compute all derived metrics
         run: |
-          python -m pipeline.compute.screener --all -v
+          python -m pipeline.compute.screener -v
 
       # --------------------------------------------------------------
       # 4) Rigenera JSON screener + per-ticker (tutti)
