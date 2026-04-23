@@ -689,7 +689,7 @@ def fetch_fundamentals_per_ticker(
     # Filtra per exchange se richiesto
     if exchange_codes:
         wanted = set(exchange_codes)
-        universe_df = universe_df[universe_df["exchange"].isin(wanted)]
+        universe_df = universe_df[universe_df["exchange_code"].isin(wanted)]
         if universe_df.empty:
             logger.warning("Nessun ticker nell'universo per exchange=%s", wanted)
             return result
@@ -755,7 +755,11 @@ def fetch_fundamentals_per_ticker(
         if exchange_codes:
             result.exchanges_processed = list(exchange_codes)
         else:
-            result.exchanges_processed = sorted(universe_df["exchange"].unique().tolist())
+            exch_col = "exchange_code" if "exchange_code" in universe_df.columns else "exchange"
+            if exch_col in universe_df.columns:
+                result.exchanges_processed = sorted(universe_df[exch_col].unique().tolist())
+            else:
+                result.exchanges_processed = []
 
     finally:
         if owned_client:
