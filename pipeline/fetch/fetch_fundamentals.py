@@ -559,10 +559,11 @@ def fetch_fundamentals_bulk(
 
                 # Budget guard
                 stats = client.get_usage_stats()
-                if stats.credits_total >= daily_budget * alert_pct:
+                credits_used = stats.get('credits_total', 0) if isinstance(stats, dict) else getattr(stats, 'credits_total', 0)
+                if credits_used >= daily_budget * alert_pct:
                     logger.warning(
                         "Budget alert: %d/%d crediti. Stop.",
-                        stats.credits_total, daily_budget,
+                        credits_used, daily_budget,
                     )
                     break
 
@@ -573,10 +574,18 @@ def fetch_fundamentals_bulk(
     finally:
         if owned_client:
             stats = client.get_usage_stats()
-            result.credits_estimated = stats.credits_total
+            if isinstance(stats, dict):
+                credits_total = stats.get('credits_total', 0)
+                calls_total = stats.get('calls_total', 0)
+                errors_total = stats.get('errors_total', 0)
+            else:
+                credits_total = getattr(stats, 'credits_total', 0)
+                calls_total = getattr(stats, 'calls_total', 0)
+                errors_total = getattr(stats, 'errors_total', 0)
+            result.credits_estimated = credits_total
             logger.info(
                 "Usage fundamentals: calls=%d, credits=%d, errors=%d",
-                stats.calls_total, stats.credits_total, stats.errors_total,
+                calls_total, credits_total, errors_total,
             )
 
     result.ended_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -638,7 +647,132 @@ def fetch_fundamentals_single(
     finally:
         if owned_client:
             stats = client.get_usage_stats()
-            result.credits_estimated = stats.credits_total
+            if isinstance(stats, dict):
+                result.credits_estimated = stats.get('credits_total', 0)
+            else:
+                result.credits_estimated = getattr(stats, 'credits_total', 0)
+
+    result.ended_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    logger.info("── %s", result.summary())
+    return result
+
+
+def fetch_fundamentals_per_ticker(
+    exchange_codes: Iterable[str] | None = None,
+    max_tickers: int | None = None,
+    client: EODHDClient | None = None,
+    dry_run: bool = False,
+) -> FetchFundamentalsResult:
+    """Refresh fundamentals iterando sull'universo e chiamando l'endpoint
+    single ``fundamentals/{ticker}`` per ogni titolo.
+
+    Compatibile con piani EODHD che includono i fundamentals (All-In-One /
+    Fundamentals Data Feed) ma non l'endpoint ``bulk-fundamentals`` (che
+    richiede Extended Fundamentals Plan).
+
+    Costo: 10 credits per ticker.
+    """
+    result = FetchFundamentalsResult(mode="per_ticker")
+    result.started_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    settings = load_settings()
+    daily_budget = int(settings["eodhd"].get("daily_budget", 100_000))
+    alert_pct = float(settings["eodhd"].get("alert_budget_pct", 0.8))
+    retention = int(settings["storage"].get("retention_years", 10))
+
+    # Universo
+    universe_df = get_universe(active_only=True)
+    if universe_df.empty:
+        logger.error("Universe vuoto. Esegui prima fetch_universe + db --load-universe.")
+        return result
+
+    # Filtra per exchange se richiesto
+    if exchange_codes:
+        wanted = set(exchange_codes)
+        universe_df = universe_df[universe_df["exchange"].isin(wanted)]
+        if universe_df.empty:
+            logger.warning("Nessun ticker nell'universo per exchange=%s", wanted)
+            return result
+
+    tickers = universe_df["ticker"].tolist()
+    logger.info(
+        "── Per-ticker fundamentals: %d ticker in universo ──",
+        len(tickers),
+    )
+
+    owned_client = False
+    if client is None:
+        client = EODHDClient()
+        owned_client = True
+
+    processed = 0
+    try:
+        for tk in tickers:
+            if max_tickers and processed >= max_tickers:
+                logger.info("max-tickers=%d raggiunto, stop.", max_tickers)
+                break
+
+            # Budget guard ogni 50 ticker
+            if processed > 0 and processed % 50 == 0:
+                stats = client.get_usage_stats()
+                credits_used = stats.get('credits_total', 0) if isinstance(stats, dict) else getattr(stats, 'credits_total', 0)
+                if credits_used >= daily_budget * alert_pct:
+                    logger.warning(
+                        "Budget alert: %d/%d crediti. Stop.",
+                        credits_used, daily_budget,
+                    )
+                    break
+
+            try:
+                payload = client.get_fundamentals(tk)
+            except EODHDNotFoundError:
+                logger.debug("Ticker %s non trovato, skip.", tk)
+                processed += 1
+                continue
+            except EODHDError as e:
+                msg = f"Errore fetch {tk}: {e}"
+                logger.error(msg)
+                result.errors.append(msg)
+                processed += 1
+                continue
+
+            n_snap, n_hist, errs = _process_payloads(
+                {tk: payload}, {tk}, dry_run, retention,
+            )
+            result.snapshots_written += n_snap
+            result.history_rows_written += n_hist
+            result.errors.extend(errs)
+            processed += 1
+
+            if processed % 100 == 0:
+                logger.info(
+                    "  Progress: %d/%d ticker processati.",
+                    processed, len(tickers),
+                )
+
+        result.tickers_processed = processed
+        # Exchange "coperti" = quelli nel universe filtrato
+        if exchange_codes:
+            result.exchanges_processed = list(exchange_codes)
+        else:
+            result.exchanges_processed = sorted(universe_df["exchange"].unique().tolist())
+
+    finally:
+        if owned_client:
+            stats = client.get_usage_stats()
+            if isinstance(stats, dict):
+                credits_total = stats.get('credits_total', 0)
+                calls_total = stats.get('calls_total', 0)
+                errors_total = stats.get('errors_total', 0)
+            else:
+                credits_total = getattr(stats, 'credits_total', 0)
+                calls_total = getattr(stats, 'calls_total', 0)
+                errors_total = getattr(stats, 'errors_total', 0)
+            result.credits_estimated = credits_total
+            logger.info(
+                "Usage per-ticker fundamentals: calls=%d, credits=%d, errors=%d",
+                calls_total, credits_total, errors_total,
+            )
 
     result.ended_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     logger.info("── %s", result.summary())
@@ -664,6 +798,14 @@ def _main() -> int:
     )
     parser.add_argument("--exchange", help="Codice exchange EODHD (es. US, LSE).")
     parser.add_argument("--ticker", help="Un singolo ticker in formato EODHD.")
+    parser.add_argument(
+        "--per-ticker",
+        action="store_true",
+        help=(
+            "Usa l'endpoint single `fundamentals/{ticker}` iterando sull'universo. "
+            "Compatibile con piani All-In-One / Fundamentals Data Feed (senza Extended)."
+        ),
+    )
     parser.add_argument(
         "--max-tickers",
         type=int,
@@ -697,6 +839,13 @@ def _main() -> int:
         if args.ticker:
             res = fetch_fundamentals_single(
                 ticker=args.ticker, dry_run=args.dry_run,
+            )
+        elif args.per_ticker:
+            exchanges = [args.exchange] if args.exchange else None
+            res = fetch_fundamentals_per_ticker(
+                exchange_codes=exchanges,
+                max_tickers=args.max_tickers,
+                dry_run=args.dry_run,
             )
         else:
             exchanges = [args.exchange] if args.exchange else None
