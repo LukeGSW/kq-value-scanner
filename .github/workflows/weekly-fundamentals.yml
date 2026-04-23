@@ -80,7 +80,7 @@ jobs:
 
       - name: Ensure storage/site dirs
         run: |
-          mkdir -p storage site/data site/data/tickers
+          mkdir -p storage docs/data docs/data/tickers
 
       # --------------------------------------------------------------
       # 1) Universe · in weekly mode ricostruiamo sempre
@@ -122,12 +122,12 @@ jobs:
       - name: Rebuild screener.json
         run: |
           python -m pipeline.generate.build_screener_json \
-            --output site/data/screener.json --minify
+            --output docs/data/screener.json --minify
 
       - name: Rebuild per-ticker JSON pages (full)
         run: |
           python -m pipeline.generate.build_ticker_pages \
-            --output-dir site/data/tickers --minify
+            --output-dir docs/data/tickers --minify
 
       # --------------------------------------------------------------
       # 5) Commit & push JSON aggiornati
@@ -136,7 +136,7 @@ jobs:
         run: |
           git config user.name  "kq-bot"
           git config user.email "kq-bot@users.noreply.github.com"
-          git add site/data/screener.json site/data/tickers/
+          git add docs/data/screener.json docs/data/tickers/
           if git diff --cached --quiet; then
             echo "Nessun cambiamento nei JSON · nulla da committare"
           else
