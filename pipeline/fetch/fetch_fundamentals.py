@@ -662,6 +662,7 @@ def fetch_fundamentals_per_ticker(
     max_tickers: int | None = None,
     client: EODHDClient | None = None,
     dry_run: bool = False,
+    force: bool = False,
 ) -> FetchFundamentalsResult:
     """Refresh fundamentals iterando sull'universo e chiamando l'endpoint
     single ``fundamentals/{ticker}`` per ogni titolo.
@@ -670,15 +671,21 @@ def fetch_fundamentals_per_ticker(
     Fundamentals Data Feed) ma non l'endpoint ``bulk-fundamentals`` (che
     richiede Extended Fundamentals Plan).
 
-    Costo: 10 credits per ticker.
+    Incrementale: per default salta i ticker il cui
+    ``fundamentals_snapshot.last_refresh_utc`` è più recente della finestra
+    ``storage.refresh_days_fundamentals`` (default 6 giorni). Usare
+    ``force=True`` per rifare l'intero universo.
+
+    Costo: 10 credits per ticker processato.
     """
     result = FetchFundamentalsResult(mode="per_ticker")
     result.started_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
     settings = load_settings()
-    daily_budget = int(settings["eodhd"].get("daily_budget", 100_000))
+    daily_budget = int(settings["eodhd"].get("daily_budget_credits", 100_000))
     alert_pct = float(settings["eodhd"].get("alert_budget_pct", 0.8))
     retention = int(settings["storage"].get("retention_years", 10))
+    refresh_days = int(settings["storage"].get("refresh_days_fundamentals", 6))
 
     # Universo
     universe_df = get_universe(active_only=True)
@@ -694,11 +701,43 @@ def fetch_fundamentals_per_ticker(
             logger.warning("Nessun ticker nell'universo per exchange=%s", wanted)
             return result
 
-    tickers = universe_df["ticker"].tolist()
+    all_tickers = universe_df["ticker"].tolist()
+
+    # Incremental filter: costruisci set dei ticker "freschi" da saltare
+    fresh_tickers: set[str] = set()
+    if not force and refresh_days > 0:
+        cutoff = datetime.utcnow() - pd.Timedelta(days=refresh_days)
+        cutoff_iso = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            with get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT ticker, last_refresh_utc FROM fundamentals_snapshot "
+                    "WHERE last_refresh_utc >= ?",
+                    (cutoff_iso,),
+                ).fetchall()
+            fresh_tickers = {r[0] if not hasattr(r, 'keys') else r['ticker'] for r in rows}
+        except Exception as e:
+            logger.warning("Impossibile leggere fundamentals_snapshot per skip: %s", e)
+            fresh_tickers = set()
+
+    tickers = [t for t in all_tickers if t not in fresh_tickers]
+    skipped = len(all_tickers) - len(tickers)
     logger.info(
-        "── Per-ticker fundamentals: %d ticker in universo ──",
-        len(tickers),
+        "── Per-ticker fundamentals: universo=%d · freschi (skip)=%d · da fetchare=%d ──",
+        len(all_tickers), skipped, len(tickers),
     )
+    if not tickers:
+        logger.info("Tutti i ticker sono freschi (refresh_days=%d). Nessuna chiamata API.", refresh_days)
+        result.tickers_processed = 0
+        if exchange_codes:
+            result.exchanges_processed = list(exchange_codes)
+        else:
+            exch_col = "exchange_code" if "exchange_code" in universe_df.columns else "exchange"
+            if exch_col in universe_df.columns:
+                result.exchanges_processed = sorted(universe_df[exch_col].unique().tolist())
+        result.ended_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        logger.info("── %s", result.summary())
+        return result
 
     owned_client = False
     if client is None:
@@ -811,6 +850,14 @@ def _main() -> int:
         ),
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Ignora la finestra di freshness (refresh_days_fundamentals) e rifa "
+            "tutto l'universo. ATTENZIONE: spende 10 credits × tutti i ticker."
+        ),
+    )
+    parser.add_argument(
         "--max-tickers",
         type=int,
         default=None,
@@ -850,6 +897,7 @@ def _main() -> int:
                 exchange_codes=exchanges,
                 max_tickers=args.max_tickers,
                 dry_run=args.dry_run,
+                force=args.force,
             )
         else:
             exchanges = [args.exchange] if args.exchange else None
