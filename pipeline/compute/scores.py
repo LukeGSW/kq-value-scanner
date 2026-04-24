@@ -386,8 +386,53 @@ def compute_kq_value_score(metrics_df: pd.DataFrame) -> pd.Series:
         up("rs_126d"), up("pct_from_sma200"),
     ], axis=1).mean(axis=1, skipna=True)
 
-    score = (0.40 * valuation_sub + 0.25 * quality_sub
-             + 0.20 * solidity_sub + 0.15 * momentum_sub) * 100.0
+    # ------------------------------------------------------------------
+    # Aggregazione finale — media pesata con rinormalizzazione.
+    #
+    # BUG storico corretto qui:
+    # `w1*sub1 + w2*sub2 + …` in pandas produce NaN se anche UNA SOLA delle
+    # sub è NaN (NaN*x = NaN). Conseguenza: ticker con buoni dati ma con
+    # momentum_sub NaN (es. benchmark mancante o storia < 200gg) uscivano
+    # con kq_value_score NULL, che si propagava sulle pagine ticker e
+    # finiva a dominare le righe di testa dello screener (sort con NaN).
+    #
+    # Nuova logica: per ogni riga sommiamo peso × sub SOLO dove sub è
+    # definita, poi normalizziamo dividendo per il peso totale effettivo.
+    # Se il peso effettivo è < 0.50 (cioè meno della metà dei segnali è
+    # disponibile), il ticker resta NaN — NON vogliamo punteggi inventati
+    # con un'unica categoria attiva.
+    # ------------------------------------------------------------------
+    subs = pd.concat(
+        [valuation_sub, quality_sub, solidity_sub, momentum_sub],
+        axis=1, keys=["valuation", "quality", "solidity", "momentum"],
+    )
+    weights = pd.Series({"valuation": 0.40, "quality": 0.25,
+                          "solidity": 0.20,  "momentum": 0.15})
+
+    # mask dove la sub è valida
+    valid_mask = subs.notna()
+    # matrice dei pesi effettivi (0 se sub NaN)
+    eff_weights = valid_mask.astype(float).multiply(weights, axis=1)
+    total_w = eff_weights.sum(axis=1)  # peso totale per riga
+
+    # contributo = peso * sub (trattando NaN come 0 nel prodotto)
+    contrib = subs.fillna(0.0).multiply(weights, axis=1)
+    # score rinormalizzato
+    raw = contrib.sum(axis=1) / total_w  # NaN dove total_w == 0
+
+    # Soglia di copertura: almeno metà del peso totale (0.50)
+    MIN_COVERAGE = 0.50
+    score = raw.where(total_w >= MIN_COVERAGE) * 100.0
+
+    # Diagnostica utile nei log
+    n_total = len(score)
+    n_null = int(score.isna().sum())
+    if n_null > 0:
+        logger.info(
+            "KQ score: %d/%d ticker con score NaN (copertura < %.0f%% "
+            "o tutte le sub mancanti).",
+            n_null, n_total, MIN_COVERAGE * 100,
+        )
     return score
 
 
