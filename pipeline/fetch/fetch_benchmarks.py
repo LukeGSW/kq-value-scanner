@@ -285,7 +285,13 @@ def _main() -> int:
     for e in res["errors"][:10]:
         print(f"    · {e}")
     print("=" * 70)
-    return 0 if not res["errors"] else 2
+
+    # I benchmark sono best-effort: un ticker "non trovato" su EODHD non è
+    # un errore sistemico. Ritorniamo fatale (exit 1) SOLO se nessun benchmark
+    # è stato scaricato (problema di connessione/credenziali/DB).
+    if res["rows_written"] == 0 and res["processed"] > 0:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
