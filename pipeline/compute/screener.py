@@ -72,13 +72,17 @@ class ScreenerBuildResult:
 
 
 def _merge_on_ticker(frames: list[pd.DataFrame]) -> pd.DataFrame:
-    """Merge outer sulla colonna ticker mantenendo tutte le colonne."""
-    if not frames:
+    """Merge outer sulla colonna ticker mantenendo tutte le colonne.
+
+    Scarta i DataFrame vuoti o senza colonna ``ticker`` (robusto al caso in
+    cui uno dei compute ritorna vuoto, es. technical quando prices_daily è
+    vuoto).
+    """
+    valid = [f for f in frames if not f.empty and "ticker" in f.columns]
+    if not valid:
         return pd.DataFrame()
-    out = frames[0]
-    for f in frames[1:]:
-        if f.empty:
-            continue
+    out = valid[0].copy()
+    for f in valid[1:]:
         out = out.merge(f, on="ticker", how="outer")
     return out
 
