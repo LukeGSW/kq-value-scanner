@@ -111,11 +111,42 @@ def compute_seasonality_for_ticker(
         matrix.append([None if pd.isna(v) else float(v) for v in row])
     avg_row = [None if pd.isna(v) else float(v) for v in avg.values]
 
+    # ------------------------------------------------------------------
+    # Nuova vista: grafico a linee della media mensile (più leggibile
+    # dell'heatmap mese×anno). Produciamo 3 serie da 12 punti:
+    #   - monthly_avg          : return medio per mese (come avg_row)
+    #   - monthly_avg_detrended: stesso segnale centrato sulla media
+    #                            annua/12 (tira fuori la pura stagionalità
+    #                            depurandola dal drift complessivo del titolo).
+    #   - monthly_hit_rate     : frazione di anni con return positivo per
+    #                            quel mese (0..1). Utile per robustezza.
+    # ------------------------------------------------------------------
+    # Baseline di trend: media complessiva dei rendimenti mensili. Sottraendola
+    # si isola la componente stagionale (quanto il mese batte/perde rispetto
+    # alla media mensile del titolo).
+    overall_mean = float(pivot.stack().mean()) if not pivot.empty else 0.0
+    detrended = [
+        None if pd.isna(v) else float(v) - overall_mean for v in avg.values
+    ]
+    # Hit rate: P(return > 0) per mese
+    hit_rate = []
+    for m in range(1, 13):
+        col = pivot[m] if m in pivot.columns else pd.Series(dtype=float)
+        col = col.dropna()
+        if len(col) == 0:
+            hit_rate.append(None)
+        else:
+            hit_rate.append(float((col > 0).sum() / len(col)))
+
     return {
         "ticker": ticker,
         "years": years_list + ["AVG"],
         "months": _MONTH_LABELS_IT,
         "matrix": matrix + [avg_row],
+        "monthly_avg":           avg_row,
+        "monthly_avg_detrended": detrended,
+        "monthly_hit_rate":      hit_rate,
+        "overall_mean":          overall_mean,
         "n_years": len(years_list),
     }
 
