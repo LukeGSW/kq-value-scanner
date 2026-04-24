@@ -69,17 +69,35 @@ jobs:
       # --------------------------------------------------------------
       # Restore SQLite cache
       # --------------------------------------------------------------
-      - name: Restore SQLite cache
-        uses: actions/cache@v4
+      # --------------------------------------------------------------
+      # Restore SQLite dall'artifact del run precedente (anche fallito).
+      # Abbandoniamo actions/cache che non persisteva tra run: l'artifact
+      # viene sempre salvato in post-job, anche se il job fallisce.
+      # --------------------------------------------------------------
+      - name: Download DB from previous run artifact
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
         with:
-          path: pipeline/storage/db
-          key: kq-sqlite-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            kq-sqlite-${{ runner.os }}-
+          workflow: weekly-fundamentals.yml
+          workflow_conclusion: ""
+          name_is_regexp: true
+          name: "weekly-fundamentals-logs-.*"
+          path: ./_restored_artifact
+          if_no_artifact_found: warn
 
       - name: Ensure storage/site dirs
         run: |
           mkdir -p pipeline/storage/db docs/data docs/data/tickers
+
+      - name: Move restored DB into place
+        run: |
+          if [[ -f ./_restored_artifact/pipeline/storage/db/kq_scanner.db ]]; then
+            mv ./_restored_artifact/pipeline/storage/db/kq_scanner.db pipeline/storage/db/kq_scanner.db
+            echo "DB ripristinato dall'artifact precedente."
+            python -c "import sqlite3; c=sqlite3.connect('pipeline/storage/db/kq_scanner.db'); print('snapshot rows:', c.execute('SELECT COUNT(*) FROM fundamentals_snapshot').fetchone()[0])"
+          else
+            echo "Nessun DB da ripristinare (primo run o artifact non trovato)."
+          fi
 
       # --------------------------------------------------------------
       # 1) Universe · in weekly mode ricostruiamo sempre
