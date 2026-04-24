@@ -319,10 +319,7 @@ def build_screener_json(
     # Cache snapshot su DB (facoltativo ma utile per versioning)
     if cache_snapshot:
         try:
-            save_screener_snapshot(
-                payload_json=text, ticker_count=result.tickers_out,
-                db_path=db_path,
-            )
+            save_screener_snapshot(payload=text, db_path=db_path)
             result.cached = True
         except Exception as e:
             logger.warning("Cache snapshot fallita: %s", e)
