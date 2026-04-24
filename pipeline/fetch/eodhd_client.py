@@ -453,6 +453,11 @@ class EODHDClient:
             return pd.DataFrame()
 
         df = pd.DataFrame(data)
+        # Normalizza nomi colonne a lowercase: EODHD talvolta ritorna
+        # `Adjusted_close` con la A maiuscola → `_normalize_bulk_df` cerca
+        # `adjusted_close` lowercase e silenziosamente imposta NULL.
+        # Questo causava metriche tecniche calcolate su `close` non-adjusted.
+        df.columns = [c.lower() for c in df.columns]
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"])
         return df
