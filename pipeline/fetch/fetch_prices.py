@@ -164,9 +164,6 @@ def fetch_prices_bulk(
     result = FetchPricesResult(mode="bulk")
     result.started_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    if exchange_codes is None:
-        exchange_codes = [ex["code"] for ex in get_all_exchanges()]
-
     # Universo attivo — per filtrare le risposte bulk
     universe_df = get_universe(active_only=True)
     if universe_df.empty:
@@ -176,10 +173,34 @@ def fetch_prices_bulk(
         )
         return result
     universe_tickers = set(universe_df["ticker"].tolist())
+    # Exchange realmente presenti nell'universo (evita di chiamare bulk per
+    # exchange vuoti → risparmia crediti + evita 404 su exchange non esposti
+    # dall'endpoint eod-bulk-last-day, es. MI sul nostro piano).
+    exchanges_in_universe = sorted(universe_df["exchange_code"].dropna().unique().tolist())
     logger.info(
-        "Universe attivo: %d ticker (%d exchange)",
-        len(universe_tickers), universe_df["exchange_code"].nunique(),
+        "Universe attivo: %d ticker (%d exchange: %s)",
+        len(universe_tickers),
+        len(exchanges_in_universe),
+        ", ".join(exchanges_in_universe),
     )
+
+    if exchange_codes is None:
+        # Default: solo gli exchange che hanno effettivamente ticker attivi.
+        exchange_codes = exchanges_in_universe
+    else:
+        # Se l'utente ha passato --exchange esplicito, intersezione con
+        # l'universo per non bruciare crediti su exchange vuoti.
+        before = list(exchange_codes)
+        exchange_codes = [xc for xc in exchange_codes if xc in set(exchanges_in_universe)]
+        skipped = [xc for xc in before if xc not in exchange_codes]
+        if skipped:
+            logger.warning(
+                "Exchange senza ticker nell'universo (skip): %s",
+                ", ".join(skipped),
+            )
+        if not exchange_codes:
+            logger.warning("Nessun exchange valido dopo il filtro universo.")
+            return result
 
     owned_client = False
     if client is None:
