@@ -175,6 +175,21 @@ jobs:
           python -m pipeline.fetch.fetch_prices $ARGS
 
       # --------------------------------------------------------------
+      # 2b) Fetch benchmark (SPY, VUKE, EXS1, CAC, AEX, BEL20, FTSEMIB, SMI)
+      #     Servono al calcolo di rs_126d in compute.technical.
+      #     Non sono nell'universo → step separato.
+      #     mode=full → backfill 10Y; mode=incremental → ultimi 30gg.
+      # --------------------------------------------------------------
+      - name: Fetch benchmark prices
+        env:
+          MODE: ${{ github.event.inputs.mode || 'incremental' }}
+        run: |
+          ARGS="-v"
+          if [[ "$MODE" == "full" ]]; then ARGS="$ARGS --backfill --years 10"; fi
+          echo "Running: python -m pipeline.fetch.fetch_benchmarks $ARGS"
+          python -m pipeline.fetch.fetch_benchmarks $ARGS
+
+      # --------------------------------------------------------------
       # 3) Ricalcolo metriche tecniche (SMA, zScore, HV, DD, RS)
       # --------------------------------------------------------------
       - name: Compute technical metrics
