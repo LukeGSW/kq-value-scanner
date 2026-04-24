@@ -446,22 +446,46 @@ def _build_price_series(
     # Unix seconds
     ts = (df["date"].astype("int64") // 10**9).astype("int64")
 
-    # OHLC (useremo 'close' non adjusted per le candele, come nel mockup)
+    # ----------------------------------------------------------------------
+    # Split adjustment — ratio = adjusted_close / close
+    # ----------------------------------------------------------------------
+    # EODHD fornisce `adjusted_close` (back-adjusted per split e dividendi)
+    # ma NON fornisce `adjusted_open/high/low`. Per avere candele coerenti
+    # ricalcoliamo il fattore di adjustment e lo applichiamo a O/H/L.
+    # Se manca adjusted_close (es. periodi molto vecchi), il ratio è 1.
+    close_raw = df["close"].astype(float)
+    adj_close = df.get("adjusted_close")
+    if adj_close is not None and adj_close.notna().any():
+        adj_close = adj_close.astype(float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            adj_ratio = adj_close / close_raw
+        adj_ratio = adj_ratio.replace([np.inf, -np.inf], np.nan).fillna(1.0)
+    else:
+        adj_close = close_raw.copy()
+        adj_ratio = pd.Series(1.0, index=df.index)
+
+    # Serie prezzi adjusted (per candle, SMA, zscore)
+    adj_open  = df["open"].astype(float)  * adj_ratio
+    adj_high  = df["high"].astype(float)  * adj_ratio
+    adj_low   = df["low"].astype(float)   * adj_ratio
+    # `close` adjusted è adj_close stesso (allineato)
+    close = adj_close
+
+    # OHLC adjusted per le candele (no step da split)
     candles = []
     for i in range(len(df)):
-        if pd.isna(df["close"].iloc[i]):
+        if pd.isna(close.iloc[i]):
             continue
         row_c = {
-            "time": int(ts.iloc[i]),
-            "open": _clean(df["open"].iloc[i], 4),
-            "high": _clean(df["high"].iloc[i], 4),
-            "low":  _clean(df["low"].iloc[i], 4),
-            "close":_clean(df["close"].iloc[i], 4),
+            "time":  int(ts.iloc[i]),
+            "open":  _clean(adj_open.iloc[i],  4),
+            "high":  _clean(adj_high.iloc[i],  4),
+            "low":   _clean(adj_low.iloc[i],   4),
+            "close": _clean(close.iloc[i],     4),
         }
         candles.append(row_c)
 
-    # SMA
-    close = df["close"].astype(float)
+    # SMA su adjusted close
     sma_s = close.rolling(sma_short).mean()
     sma_l = close.rolling(sma_long).mean()
     sma50_series = [
@@ -473,23 +497,27 @@ def _build_price_series(
         for i in range(len(df)) if not pd.isna(sma_l.iloc[i])
     ]
 
-    # Volumi con color in base a close>=open
+    # Volume split-adjusted (volume raw * 1/ratio: post-split più azioni circolano).
+    # Color in base a close>=open (adjusted).
     volume = []
     for i in range(len(df)):
         v = df["volume"].iloc[i]
         if pd.isna(v):
             continue
-        o = df["open"].iloc[i]
-        c = df["close"].iloc[i]
+        r = float(adj_ratio.iloc[i]) if not pd.isna(adj_ratio.iloc[i]) else 1.0
+        v_adj = int(float(v) / r) if r > 0 else int(float(v))
+        o = adj_open.iloc[i]
+        c = close.iloc[i]
         color = "rgba(16,185,129,0.45)" if (pd.notna(o) and pd.notna(c) and c >= o) \
             else "rgba(239,68,68,0.45)"
         volume.append({
             "time":  int(ts.iloc[i]),
-            "value": int(v),
+            "value": v_adj,
             "color": color,
         })
 
-    # Log returns + zscore SMA 90 (serve per il terzo pane del grafico)
+    # Log returns + zscore SMA 90 (sulla serie ADJUSTED — altrimenti uno split
+    # produrrebbe un log-return spurio di ~-0.5 che invaliderebbe lo zscore).
     log_close = np.log(close.replace(0, np.nan))
     log_ret = log_close.diff()
     roll_mean = log_ret.rolling(z_window).mean()
@@ -563,7 +591,13 @@ def _build_diagnostics_series(
 
     df = ohlc.sort_values("date").reset_index(drop=True)
     ts = (df["date"].astype("int64") // 10**9).astype("int64")
-    close = df["close"].astype(float)
+    # IMPORTANTE: usiamo adjusted_close (non close) per drawdown/HV/RS,
+    # altrimenti uno split creerebbe un drawdown fittizio del -50% e
+    # contaminerebbe HV 20 e RS 126d.
+    if "adjusted_close" in df.columns and df["adjusted_close"].notna().any():
+        close = df["adjusted_close"].astype(float)
+    else:
+        close = df["close"].astype(float)
 
     # Drawdown
     running_max = close.cummax()
@@ -588,15 +622,19 @@ def _build_diagnostics_series(
             "value": round(float(hv.iloc[i]), 4),
         })
 
-    # Relative strength 126d vs benchmark
+    # Relative strength 126d vs benchmark (anche il benchmark va su adjusted)
     if bench_ohlc is not None and not bench_ohlc.empty:
         bdf = bench_ohlc.sort_values("date").reset_index(drop=True)
         bdf["date"] = pd.to_datetime(bdf["date"])
+        if "adjusted_close" in bdf.columns and bdf["adjusted_close"].notna().any():
+            bdf["__bclose"] = bdf["adjusted_close"].astype(float)
+        else:
+            bdf["__bclose"] = bdf["close"].astype(float)
         df2 = pd.DataFrame({
             "date":  pd.to_datetime(df["date"]),
             "close": close,
         }).merge(
-            bdf[["date", "close"]].rename(columns={"close": "bench_close"}),
+            bdf[["date", "__bclose"]].rename(columns={"__bclose": "bench_close"}),
             on="date", how="inner",
         )
         if not df2.empty:
