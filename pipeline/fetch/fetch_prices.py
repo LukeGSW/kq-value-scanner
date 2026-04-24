@@ -219,10 +219,18 @@ def fetch_prices_bulk(
     finally:
         if owned_client:
             stats = client.get_usage_stats()
-            result.credits_estimated = stats.credits_total
+            if isinstance(stats, dict):
+                credits_total = stats.get('credits_total', 0)
+                calls_total = stats.get('calls_total', 0)
+                errors_total = stats.get('errors_total', 0)
+            else:
+                credits_total = getattr(stats, 'credits_total', 0)
+                calls_total = getattr(stats, 'calls_total', 0)
+                errors_total = getattr(stats, 'errors_total', 0)
+            result.credits_estimated = credits_total
             logger.info(
                 "Usage bulk: calls=%d, credits=%d, errors=%d",
-                stats.calls_total, stats.credits_total, stats.errors_total,
+                calls_total, credits_total, errors_total,
             )
 
     result.ended_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -330,26 +338,35 @@ def fetch_prices_backfill(
             # Check budget ogni 100 ticker
             if i % 100 == 0:
                 stats = client.get_usage_stats()
-                if stats.credits_total >= daily_budget * alert_pct:
+                credits_used = stats.get('credits_total', 0) if isinstance(stats, dict) else getattr(stats, 'credits_total', 0)
+                if credits_used >= daily_budget * alert_pct:
                     logger.warning(
                         "Budget alert: %d/%d credits usati (%.0f%%). "
                         "Interruzione backfill.",
-                        stats.credits_total, daily_budget,
-                        100 * stats.credits_total / daily_budget,
+                        credits_used, daily_budget,
+                        100 * credits_used / daily_budget,
                     )
                     break
                 logger.info(
                     "Progress backfill: %d/%d ticker, credits=%d",
-                    i, len(tickers), stats.credits_total,
+                    i, len(tickers), credits_used,
                 )
 
     finally:
         if owned_client:
             stats = client.get_usage_stats()
-            result.credits_estimated = stats.credits_total
+            if isinstance(stats, dict):
+                credits_total = stats.get('credits_total', 0)
+                calls_total = stats.get('calls_total', 0)
+                errors_total = stats.get('errors_total', 0)
+            else:
+                credits_total = getattr(stats, 'credits_total', 0)
+                calls_total = getattr(stats, 'calls_total', 0)
+                errors_total = getattr(stats, 'errors_total', 0)
+            result.credits_estimated = credits_total
             logger.info(
                 "Usage backfill: calls=%d, credits=%d, errors=%d",
-                stats.calls_total, stats.credits_total, stats.errors_total,
+                calls_total, credits_total, errors_total,
             )
 
     result.ended_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
