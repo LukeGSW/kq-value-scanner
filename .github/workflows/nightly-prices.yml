@@ -204,11 +204,28 @@ jobs:
           git add docs/data/screener.json docs/data/tickers/
           if git diff --cached --quiet; then
             echo "Nessun cambiamento nei JSON · nulla da committare"
-          else
-            TS=$(date -u '+%Y-%m-%d %H:%M UTC')
-            git commit -m "chore(data): nightly prices refresh · $TS"
-            git push
+            exit 0
           fi
+          TS=$(date -u '+%Y-%m-%d %H:%M UTC')
+          git commit -m "chore(data): nightly prices refresh · $TS"
+
+          # Push con retry + rebase: se la main è avanzata durante il run
+          # (workflow long-running), rebasiamo e riproviamo invece di fallire.
+          for attempt in 1 2 3; do
+            if git push; then
+              echo "Push OK al tentativo $attempt"
+              exit 0
+            fi
+            echo "Push fallito (tentativo $attempt/3) · fetch + rebase + retry"
+            git fetch origin main
+            git rebase origin/main || {
+              echo "Rebase fallito · abort"
+              git rebase --abort || true
+              exit 1
+            }
+          done
+          echo "Push fallito dopo 3 tentativi"
+          exit 1
 
       # --------------------------------------------------------------
       # 6) Report artifacts (logs + fetch_log table dump)
