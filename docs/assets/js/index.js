@@ -227,9 +227,30 @@
     const $error = document.getElementById('errorBox');
 
     try{
-      const payload = await KQ.loadJson(JSON_URL);
+      /* Cache-busting manuale: alcuni CDN (incluso GitHub Pages) servono
+         varianti stale nonostante `cache:'no-store'`. Aggiungiamo un
+         timestamp garantito unique-per-fetch. */
+      const bust = 'v=' + Date.now();
+      const url = JSON_URL + '?' + bust;
+      const payload = await KQ.loadJson(url);
       const meta = payload.meta || {};
       const rows = payload.rows || [];
+
+      /* Log diagnostico visibile in DevTools → Console */
+      console.log('[KQ] screener.json fetched:', {
+        url,
+        rows_count: rows.length,
+        ticker_count_meta: meta.ticker_count,
+        build_ts_utc: meta.build_ts_utc,
+        schema_version: meta.schema_version,
+        first_row: rows[0] ? rows[0].ticker : null,
+        sample_fields_first_row: rows[0] ? {
+          pe_ttm: rows[0].pe_ttm,
+          forward_pe: rows[0].forward_pe,
+          market_cap_usd: rows[0].market_cap_usd,
+          last_close: rows[0].last_close,
+        } : null,
+      });
 
       renderStats(meta);
 
@@ -246,12 +267,16 @@
       /* Rimuovi overlay */
       $loading.style.display = 'none';
 
-      /* Inizializza DataTables — i valori di ordering sono presi dai data-order */
+      /* Inizializza DataTables — i valori di ordering sono presi dai data-order.
+         `scrollX:true` → DataTables wrappa la tabella in un contenitore con
+         overflow-x:auto, mantiene header e body sincronizzati in larghezza e
+         permette di scorrere orizzontalmente su tutte le 20 colonne. */
       const dt = window.jQuery('#screenerTable').DataTable({
         pageLength: 50,
         lengthMenu: [25, 50, 100, 250, 500],
         order: [[COLUMNS.findIndex(c => c.key==='kq_value_score'), 'desc']],
         autoWidth: false,
+        scrollX: true,
         deferRender: true,
         language: {
           sProcessing:    'Elaborazione…',
@@ -308,4 +333,15 @@
   }
 
   document.addEventListener('DOMContentLoaded', boot);
+
+  /* Se torniamo dalla pagina ticker via back/forward e il browser ha usato
+     il bfcache (pageshow.persisted === true), il DOM è "congelato" e
+     DataTables può trovarsi in stato inconsistente. Forziamo un reload
+     completo per garantire una pagina sempre fresca. */
+  window.addEventListener('pageshow', function(e){
+    if(e.persisted){
+      console.log('[KQ] bfcache hit → reload forzato');
+      window.location.reload();
+    }
+  });
 })();
