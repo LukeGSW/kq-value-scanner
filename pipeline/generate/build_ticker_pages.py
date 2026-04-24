@@ -292,6 +292,23 @@ def _build_cash_debt(
     }
 
 
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    """Converte a float trattando NaN/None/stringhe vuote come ``default``.
+
+    Nota: ``v or default`` in Python NON funziona per NaN — ``NaN`` è truthy
+    e passa attraverso. Questa helper è l'unico modo corretto.
+    """
+    if v is None:
+        return default
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(f) or math.isinf(f):
+        return default
+    return f
+
+
 def _net_debt_trend_5y(history_df: pd.DataFrame) -> list[dict[str, Any]]:
     """Ritorna [{year, net_debt}, …] per gli ultimi 5 annual close disponibili."""
     if history_df is None or history_df.empty:
@@ -304,16 +321,16 @@ def _net_debt_trend_5y(history_df: pd.DataFrame) -> list[dict[str, Any]]:
     bs = bs.tail(5)
     out: list[dict[str, Any]] = []
     for _, r in bs.iterrows():
-        ltd = r.get("long_term_debt") or 0.0
-        std = r.get("short_term_debt") or 0.0
-        cash = r.get("cash_and_equivalents") or 0.0
-        sti = r.get("short_term_investments") or 0.0
-        try:
-            nd = (float(ltd) + float(std)) - (float(cash) + float(sti))
-        except (TypeError, ValueError):
+        ltd = _safe_float(r.get("long_term_debt"))
+        std = _safe_float(r.get("short_term_debt"))
+        cash = _safe_float(r.get("cash_and_equivalents"))
+        sti = _safe_float(r.get("short_term_investments"))
+        nd = (ltd + std) - (cash + sti)
+        # Se tutti i componenti erano NaN/None → nd=0.0 ma non significativo
+        if ltd == 0 and std == 0 and cash == 0 and sti == 0:
             continue
         out.append({
-            "year":     r["period_end"].year,
+            "year":     int(r["period_end"].year),
             "net_debt": round(nd, 0),
         })
     return out
@@ -328,15 +345,15 @@ def _debt_equity_latest(history_df: pd.DataFrame) -> float | None:
         return None
     bs = bs.sort_values("period_end")
     r = bs.iloc[-1]
-    try:
-        ltd = float(r.get("long_term_debt") or 0.0)
-        std = float(r.get("short_term_debt") or 0.0)
-        eq = float(r.get("total_equity") or 0.0)
-        if eq == 0:
-            return None
-        return round((ltd + std) / eq, 3)
-    except (TypeError, ValueError):
+    ltd = _safe_float(r.get("long_term_debt"))
+    std = _safe_float(r.get("short_term_debt"))
+    eq = _safe_float(r.get("total_equity"))
+    if eq == 0:
         return None
+    ratio = (ltd + std) / eq
+    if math.isnan(ratio) or math.isinf(ratio):
+        return None
+    return round(ratio, 3)
 
 
 def _build_cashflow_quality(
@@ -359,21 +376,21 @@ def _build_cashflow_quality(
                 if inc_match.empty:
                     inc_match = inc.sort_values("period_end").iloc[[-1]]
                 inc_r = inc_match.iloc[0]
-                ni = inc_r.get("net_income")
-                ocf = cf.get("operating_cashflow")
-                rev = inc_r.get("total_revenue")
-                capex = cf.get("capital_expenditure")
-                try:
-                    if ni and ocf and float(ni) != 0:
-                        ocf_ni = round(float(ocf) / float(ni), 3)
-                except (TypeError, ValueError):
-                    pass
-                try:
-                    if rev and capex and float(rev) != 0:
-                        # capex è tipicamente negativo; prendiamo abs per ratio
-                        capex_rev = round(abs(float(capex)) / float(rev), 4)
-                except (TypeError, ValueError):
-                    pass
+                # Uso _safe_float: scarta NaN/None/stringhe vuote.
+                # `x or 0` non basta perché NaN è truthy in Python.
+                ni = _safe_float(inc_r.get("net_income"))
+                ocf = _safe_float(cf.get("operating_cashflow"))
+                rev = _safe_float(inc_r.get("total_revenue"))
+                capex = _safe_float(cf.get("capital_expenditure"))
+                if ni != 0 and ocf != 0:
+                    ratio = ocf / ni
+                    if not (math.isnan(ratio) or math.isinf(ratio)):
+                        ocf_ni = round(ratio, 3)
+                if rev != 0 and capex != 0:
+                    # capex tipicamente negativo; abs per ratio intensivo
+                    ratio = abs(capex) / rev
+                    if not (math.isnan(ratio) or math.isinf(ratio)):
+                        capex_rev = round(ratio, 4)
 
     return {
         "fcf_ttm":    _clean(s_row.get("free_cash_flow_ttm"), 0),
@@ -866,8 +883,12 @@ def build_all_ticker_pages(
             # Nome file: sostituisci caratteri non safe (ticker EODHD usa '.', ok su file)
             safe = tk.replace("/", "_")
             fp = out_dir / f"{safe}.json"
+            # allow_nan=False: Python serializza NaN come `NaN` letterale, che
+            # NON è JSON valido (JSON.parse lato browser fallisce). Forziamo
+            # l'errore al build time così se un NaN sfugge a `_clean()`
+            # vediamo subito il ticker colpevole nel log.
             text = json.dumps(payload, ensure_ascii=False, indent=indent,
-                               separators=(",", ":"))
+                               separators=(",", ":"), allow_nan=False)
             fp.write_text(text, encoding="utf-8")
             result.total_size_bytes += len(text.encode("utf-8"))
             result.tickers_out += 1
