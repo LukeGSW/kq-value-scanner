@@ -36,7 +36,10 @@ universe:
       country: "USA"
       benchmark: "SPY.US"
 
-  # Exchange Europa
+  # Exchange Europa — SOLO quelli con benchmark disponibile su EODHD.
+  # AS, BR, MI, SW temporaneamente sospesi: EODHD non espone indici nativi
+  # (AEX, BEL20, FTSEMIB, SMI) sul piano attuale → RS non calcolabile.
+  # Riabilitabili in futuro trovando un ETF proxy per ciascun benchmark.
   exchanges_eu:
     - code: "LSE"
       name: "London Stock Exchange"
@@ -52,27 +55,14 @@ universe:
       name: "Euronext Paris"
       currency: "EUR"
       country: "France"
-      benchmark: "CAC.PA"
-    - code: "AS"
-      name: "Euronext Amsterdam"
-      currency: "EUR"
-      country: "Netherlands"
-      benchmark: "AEX.AS"
-    - code: "BR"
-      name: "Euronext Brussels"
-      currency: "EUR"
-      country: "Belgium"
-      benchmark: "BEL20.BR"
-    - code: "MI"
-      name: "Borsa Italiana"
-      currency: "EUR"
-      country: "Italy"
-      benchmark: "FTSEMIB.MI"
-    - code: "SW"
-      name: "SIX Swiss Exchange"
-      currency: "CHF"
-      country: "Switzerland"
-      benchmark: "SMI.SW"
+      benchmark: "CAC.PA"                 # CAC 40 index
+
+  # Exchange temporaneamente sospesi (benchmark non disponibile):
+  # exchanges_eu_suspended:
+  #   - code: "AS"   · benchmark: "AEX.AS"
+  #   - code: "BR"   · benchmark: "BEL20.BR"
+  #   - code: "MI"   · benchmark: "FTSEMIB.MI"
+  #   - code: "SW"   · benchmark: "SMI.SW"
 
 # ------------------------------------------------------------------------------
 # API EODHD
