@@ -66,37 +66,83 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # --------------------------------------------------------------
-      # Restore SQLite cache
-      # --------------------------------------------------------------
-      # --------------------------------------------------------------
-      # Restore SQLite dall'artifact del run precedente (anche fallito).
-      # Abbandoniamo actions/cache che non persisteva tra run: l'artifact
-      # viene sempre salvato in post-job, anche se il job fallisce.
-      # --------------------------------------------------------------
-      - name: Download DB from previous run artifact
-        uses: dawidd6/action-download-artifact@v6
-        continue-on-error: true
-        with:
-          workflow: weekly-fundamentals.yml
-          workflow_conclusion: ""
-          name_is_regexp: true
-          name: "weekly-fundamentals-logs-.*"
-          path: ./_restored_artifact
-          if_no_artifact_found: warn
-
       - name: Ensure storage/site dirs
         run: |
-          mkdir -p pipeline/storage/db docs/data docs/data/tickers
+          mkdir -p pipeline/storage/db docs/data docs/data/tickers _restored
 
-      - name: Move restored DB into place
+      # --------------------------------------------------------------
+      # Restore SQLite dal RUN PRECEDENTE con `gh` CLI (nome artifact
+      # fisso = `kq-fundamentals-db`). Affidabile al 100%: usa l'API
+      # GitHub nativa, niente regex magica, niente filtri sui conclusion
+      # che non matchano run falliti.
+      # --------------------------------------------------------------
+      - name: Restore DB from previous artifact (gh CLI)
+        id: restore_db
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          CURRENT_RUN: ${{ github.run_id }}
         run: |
-          if [[ -f ./_restored_artifact/pipeline/storage/db/kq_scanner.db ]]; then
-            mv ./_restored_artifact/pipeline/storage/db/kq_scanner.db pipeline/storage/db/kq_scanner.db
-            echo "DB ripristinato dall'artifact precedente."
-            python -c "import sqlite3; c=sqlite3.connect('pipeline/storage/db/kq_scanner.db'); print('snapshot rows:', c.execute('SELECT COUNT(*) FROM fundamentals_snapshot').fetchone()[0])"
+          set -u
+          echo "=== Cerca ultimo run (qualsiasi conclusion) con artifact 'kq-fundamentals-db' ==="
+          # Lista ultimi 30 run del workflow, escludi quello corrente, prendi il più recente
+          # che abbia un artifact chiamato 'kq-fundamentals-db'.
+          PREV_RUN_ID=""
+          for RID in $(gh run list --workflow=weekly-fundamentals.yml --limit=30 \
+                         --json databaseId --jq '.[].databaseId'); do
+            if [[ "$RID" == "$CURRENT_RUN" ]]; then continue; fi
+            if gh api "repos/$REPO/actions/runs/$RID/artifacts" \
+                 --jq '.artifacts[] | select(.expired == false) | .name' 2>/dev/null \
+                 | grep -qx "kq-fundamentals-db"; then
+              PREV_RUN_ID="$RID"
+              echo "→ Trovato run $RID con artifact 'kq-fundamentals-db'"
+              break
+            fi
+          done
+
+          if [[ -z "$PREV_RUN_ID" ]]; then
+            echo "Nessun artifact 'kq-fundamentals-db' trovato nei run precedenti."
+            echo "  (primo run con questa strategia, oppure artifact scaduti)"
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "=== Download artifact dal run $PREV_RUN_ID ==="
+          gh run download "$PREV_RUN_ID" --name kq-fundamentals-db --dir ./_restored
+
+          echo "=== Struttura scaricata ==="
+          find ./_restored -type f | head -20
+
+          # Prova vari layout possibili (path preservato / flat)
+          if [[ -f ./_restored/pipeline/storage/db/kq_scanner.db ]]; then
+            mv ./_restored/pipeline/storage/db/kq_scanner.db \
+               pipeline/storage/db/kq_scanner.db
+          elif [[ -f ./_restored/kq_scanner.db ]]; then
+            mv ./_restored/kq_scanner.db pipeline/storage/db/kq_scanner.db
           else
-            echo "Nessun DB da ripristinare (primo run o artifact non trovato)."
+            FOUND=$(find ./_restored -name 'kq_scanner.db' -type f | head -1)
+            if [[ -n "$FOUND" ]]; then
+              mv "$FOUND" pipeline/storage/db/kq_scanner.db
+            fi
+          fi
+
+          if [[ -f pipeline/storage/db/kq_scanner.db ]]; then
+            echo "DB ripristinato (size: $(stat -c%s pipeline/storage/db/kq_scanner.db) bytes)"
+            python - <<'PY'
+          import sqlite3
+          c = sqlite3.connect("pipeline/storage/db/kq_scanner.db")
+          for t in ["universe", "fundamentals_snapshot", "computed_metrics", "prices_daily"]:
+              try:
+                  n = c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                  print(f"  {t}: {n}")
+              except Exception as e:
+                  print(f"  {t}: (missing) {e}")
+          PY
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Artifact scaricato ma kq_scanner.db non trovato nei path attesi."
+            echo "restored=false" >> "$GITHUB_OUTPUT"
           fi
 
       # --------------------------------------------------------------
@@ -194,13 +240,16 @@ jobs:
           print(f"Exported {len(out)} rows")
           PY
 
-      - name: Upload logs artifact
+      # Nome artifact FISSO: è l'unica fonte di persistenza DB tra run.
+      # `overwrite: true` permette a più run di sostituire lo stesso artifact.
+      - name: Upload DB artifact (stable name)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: weekly-fundamentals-logs-${{ github.run_id }}
+          name: kq-fundamentals-db
           path: |
             fetch_log_tail.json
             pipeline/storage/db/kq_scanner.db
-          retention-days: 14
+          retention-days: 30
+          overwrite: true
           if-no-files-found: warn
