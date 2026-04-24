@@ -234,6 +234,29 @@ footer b{color:var(--text-secondary)}
   margin-top:18px;background:var(--bg-card);border:1px solid var(--border-soft);
   border-radius:12px;overflow:hidden;
 }
+/* scrollX di DataTables crea due wrapper interni: `.dataTables_scrollHead`
+   (header fisso) e `.dataTables_scrollBody` (riga prodotto scrollabile).
+   Applichiamo dark theme e scrollbar custom. */
+.dt-wrapper .dataTables_scrollHead,
+.dt-wrapper .dataTables_scrollBody{background:var(--bg-card)}
+.dt-wrapper .dataTables_scrollBody{
+  scrollbar-color:var(--border) var(--bg-card);
+  scrollbar-width:thin;
+}
+.dt-wrapper .dataTables_scrollBody::-webkit-scrollbar{height:10px;width:10px}
+.dt-wrapper .dataTables_scrollBody::-webkit-scrollbar-track{background:var(--bg-card)}
+.dt-wrapper .dataTables_scrollBody::-webkit-scrollbar-thumb{
+  background:var(--border);border-radius:5px;border:2px solid var(--bg-card);
+}
+.dt-wrapper .dataTables_scrollBody::-webkit-scrollbar-thumb:hover{
+  background:var(--accent-primary);
+}
+/* DataTables in modalità scrollX divide thead e tbody in due tabelle
+   separate — ripristiniamo il border-collapse coerente. */
+.dt-wrapper .dataTables_scrollHead table.kq-table,
+.dt-wrapper .dataTables_scrollBody table.kq-table{
+  margin:0;
+}
 table.kq-table{
   width:100%!important;border-collapse:collapse;
   font-size:13px;color:var(--text-primary);
@@ -433,7 +456,23 @@ table.kq-table tbody td.ticker-cell a:hover{color:var(--text-primary)}
   border-radius:8px;border:1px solid var(--border-soft);margin-top:8px;
 }
 
-/* Seasonality heatmap */
+/* Seasonality line chart */
+.seasonality-chart-canvas{
+  position:relative;height:320px;
+  background:var(--bg-primary);border:1px solid var(--border-soft);
+  border-radius:8px;padding:10px;
+}
+.seasonality-meta{
+  display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;
+  font-size:12px;color:var(--text-muted);
+}
+.seasonality-meta .chip{
+  background:var(--bg-card-elev);border:1px solid var(--border-soft);
+  padding:6px 12px;border-radius:6px;color:var(--text-secondary);
+}
+.seasonality-meta .chip b{color:var(--text-primary);font-weight:600}
+
+/* Seasonality heatmap (legacy — mantenuto per eventuale vista alternativa) */
 .heatmap{
   display:grid;grid-template-columns:80px repeat(12,1fr);gap:3px;
   font-family:'JetBrains Mono',monospace;font-size:10px;margin-top:14px;
