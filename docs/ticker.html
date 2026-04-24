@@ -232,14 +232,21 @@
           <span class="section-marker"></span>
           Stagionalità mensile
         </div>
-        <div class="section-sub">Return medio per mese · ultimi 10 anni + media</div>
+        <div class="section-sub">Return medio per mese · ultimi 10 anni</div>
       </div>
       <div class="explainer">
-        Ogni cella mostra il <strong>return aritmetico</strong> del titolo in quel mese. L'ultima
-        riga <em>AVG</em> aggrega la media mensile sugli anni disponibili: utile per
-        individuare finestre storicamente favorevoli o sfavorevoli.
+        La linea <strong>Media mensile</strong> mostra il rendimento aritmetico medio del
+        titolo per ciascun mese solare sugli anni disponibili. La linea
+        <em>Detrendizzata</em> rimuove il drift complessivo del titolo e isola la
+        pura <strong>componente stagionale</strong>: valori positivi = mese storicamente
+        più favorevole della media del titolo, negativi = peggiore. Le barre
+        <em>Hit rate</em> indicano in quanti degli anni osservati il mese è stato
+        positivo (50% = casuale).
       </div>
-      <div id="heatmap" class="heatmap"></div>
+      <div class="chart-main" style="margin-top:0">
+        <div class="seasonality-chart-canvas"><canvas id="seasonalityChart"></canvas></div>
+        <div id="seasonalityMeta" class="seasonality-meta"></div>
+      </div>
     </section>
 
     <!-- ==========================================================
