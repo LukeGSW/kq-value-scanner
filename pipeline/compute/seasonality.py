@@ -80,7 +80,7 @@ def compute_seasonality_for_ticker(
 
     # Resample a fine mese (last trading day effettivo del mese)
     monthly = px.resample("ME").last()
-    returns = monthly.pct_change().dropna()
+    returns = monthly.pct_change(fill_method=None).dropna()
     if returns.empty:
         return None
 
