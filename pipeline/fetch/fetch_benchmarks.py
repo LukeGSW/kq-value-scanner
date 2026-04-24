@@ -29,7 +29,7 @@ import pandas as pd
 
 from pipeline.config import get_all_exchanges
 from pipeline.fetch.eodhd_client import EODHDClient, EODHDError, EODHDNotFoundError
-from pipeline.storage.db import upsert_prices_bulk
+from pipeline.storage.db import get_connection, upsert_prices_bulk
 
 logger = logging.getLogger("kq.fetch.benchmarks")
 if not logger.handlers:
@@ -44,16 +44,76 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
-def _collect_benchmarks() -> list[str]:
-    """Lista deduplicata dei benchmark configurati in settings.yaml."""
+def _collect_benchmarks() -> list[dict]:
+    """Lista deduplicata dei benchmark con metadati dell'exchange di riferimento.
+
+    Ritorna una lista di dict: ``{"ticker": str, "code": str, "exchange_code":
+    str, "exchange_name": str, "country": str, "currency": str}``.
+    """
     seen: set[str] = set()
-    out: list[str] = []
+    out: list[dict] = []
     for ex in get_all_exchanges():
         b = ex.get("benchmark")
-        if b and b not in seen:
-            seen.add(b)
-            out.append(b)
+        if not b or b in seen:
+            continue
+        seen.add(b)
+        # "SPY.US" → code="SPY", exchange_code desumibile dal suffisso
+        if "." in b:
+            code, ex_suffix = b.rsplit(".", 1)
+        else:
+            code, ex_suffix = b, ex.get("code", "")
+        out.append(
+            {
+                "ticker": b,
+                "code": code,
+                "exchange_code": ex_suffix or ex.get("code", ""),
+                "exchange_name": ex.get("name", ""),
+                "country": ex.get("country", ""),
+                "currency": ex.get("currency", ""),
+            }
+        )
     return out
+
+
+def _ensure_benchmarks_in_universe(benches: list[dict]) -> None:
+    """Registra i benchmark come record `universe` con ``is_active=0``.
+
+    Necessario perché ``prices_daily.ticker`` ha FOREIGN KEY su
+    ``universe.ticker``. ``is_active=0`` li esclude dallo screener e dai fetch
+    bulk/fundamentals senza bisogno di codice condizionale.
+    """
+    now_utc = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    sql = """
+        INSERT INTO universe (
+            ticker, code, name, exchange_code, exchange_name,
+            country, currency, type, sector, industry,
+            market_capitalization, isin, is_active, last_refresh_utc
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)
+        ON CONFLICT(ticker) DO UPDATE SET
+            last_refresh_utc = excluded.last_refresh_utc
+    """
+    rows = [
+        (
+            b["ticker"],
+            b["code"],
+            f"{b['code']} Benchmark",
+            b["exchange_code"],
+            b["exchange_name"],
+            b["country"],
+            b["currency"],
+            "Benchmark",
+            None,
+            None,
+            None,
+            None,
+            now_utc,
+        )
+        for b in benches
+    ]
+    with get_connection() as conn:
+        conn.executemany(sql, rows)
+        conn.commit()
+    logger.info("Registrati %d benchmark in universe (is_active=0).", len(rows))
 
 
 def fetch_benchmarks(
@@ -85,6 +145,11 @@ def fetch_benchmarks(
         logger.warning("Nessun benchmark configurato in settings.yaml.")
         return {"processed": 0, "rows_written": 0, "errors": []}
 
+    # 1) Registra i benchmark in `universe` (is_active=0) per soddisfare
+    #    il FK di `prices_daily`. Idempotente.
+    if not dry_run:
+        _ensure_benchmarks_in_universe(benches)
+
     to_date = datetime.utcnow().strftime("%Y-%m-%d")
     if backfill:
         from_dt = datetime.utcnow() - timedelta(days=365 * years + 30)
@@ -92,16 +157,19 @@ def fetch_benchmarks(
         from_dt = datetime.utcnow() - timedelta(days=int(incremental_days or 30))
     from_date = from_dt.strftime("%Y-%m-%d")
 
+    tickers = [b["ticker"] for b in benches]
     logger.info(
-        "Benchmarks da scaricare: %d · periodo %s → %s (%s)",
-        len(benches), from_date, to_date, "backfill" if backfill else "incremental",
+        "Benchmarks da scaricare: %d · periodo %s → %s (%s) · %s",
+        len(tickers), from_date, to_date,
+        "backfill" if backfill else "incremental",
+        ", ".join(tickers),
     )
 
     client = EODHDClient()
     rows_written = 0
     errors: list[str] = []
 
-    for bench in benches:
+    for bench in tickers:
         try:
             df = client.get_eod(bench, from_date=from_date, to_date=to_date)
         except EODHDNotFoundError:
@@ -149,11 +217,11 @@ def fetch_benchmarks(
     )
     logger.info(
         "── Benchmark fetch done: processed=%d, rows_written=%d, credits=%d, errors=%d",
-        len(benches), rows_written, credits, len(errors),
+        len(tickers), rows_written, credits, len(errors),
     )
 
     return {
-        "processed": len(benches),
+        "processed": len(tickers),
         "rows_written": rows_written,
         "credits": credits,
         "errors": errors,
