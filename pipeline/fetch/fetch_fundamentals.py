@@ -46,6 +46,7 @@ import pandas as pd
 from pipeline.config import get_all_exchanges, load_settings
 from pipeline.fetch.eodhd_client import EODHDClient, EODHDError, EODHDNotFoundError
 from pipeline.storage.db import (
+    get_connection,
     get_universe,
     upsert_financials_history,
     upsert_fundamentals_snapshot,
