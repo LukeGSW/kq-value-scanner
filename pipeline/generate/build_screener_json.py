@@ -306,7 +306,13 @@ def build_screener_json(
 
     payload = {"meta": meta, "rows": records}
     indent = 2 if pretty else None
-    text = json.dumps(payload, ensure_ascii=False, indent=indent, separators=(",", ":"))
+    # allow_nan=False: JSON.parse lato browser non accetta NaN/Infinity.
+    # Se un NaN sfugge a `_clean()`, preferiamo fallire qui che produrre
+    # JSON corrotto consumato dal frontend.
+    text = json.dumps(
+        payload, ensure_ascii=False, indent=indent,
+        separators=(",", ":"), allow_nan=False,
+    )
 
     out_path.write_text(text, encoding="utf-8")
     size = out_path.stat().st_size
