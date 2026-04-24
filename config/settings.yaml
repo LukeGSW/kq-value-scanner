@@ -110,6 +110,10 @@ storage:
   db_path: "pipeline/storage/db/kq_scanner.db"
   parquet_root: "pipeline/storage/parquet"
   retention_years: 10                     # fundamentals history
+  # Finestra di "freshness" per i fundamentals: se last_refresh_utc è più
+  # recente di questo valore (in giorni), il fetch per-ticker salta il ticker.
+  # Evita di riconsumare crediti ai re-run infra-settimanali.
+  refresh_days_fundamentals: 6
 
 # ------------------------------------------------------------------------------
 # Calcolo metriche
