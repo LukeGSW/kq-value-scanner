@@ -71,12 +71,11 @@ jobs:
           mkdir -p pipeline/storage/db docs/data docs/data/tickers _restored
 
       # --------------------------------------------------------------
-      # Restore SQLite dal RUN PRECEDENTE con `gh` CLI (nome artifact
-      # fisso = `kq-fundamentals-db`). Affidabile al 100%: usa l'API
-      # GitHub nativa, niente regex magica, niente filtri sui conclusion
-      # che non matchano run falliti.
+      # Restore DB condiviso con nightly-prices.
+      # NOME ARTIFACT FISSO: `kq-scanner-db` (UNICO tra nightly+weekly).
+      # Cerca l'ultimo run di QUALSIASI workflow che l'abbia prodotto.
       # --------------------------------------------------------------
-      - name: Restore DB from previous artifact (gh CLI)
+      - name: Restore DB from shared artifact (gh CLI)
         id: restore_db
         continue-on-error: true
         env:
@@ -85,54 +84,42 @@ jobs:
           CURRENT_RUN: ${{ github.run_id }}
         run: |
           set -u
-          echo "=== Cerca ultimo run (qualsiasi conclusion) con artifact 'kq-fundamentals-db' ==="
-          # Lista ultimi 30 run del workflow, escludi quello corrente, prendi il più recente
-          # che abbia un artifact chiamato 'kq-fundamentals-db'.
+          echo "=== Cerca ultimo run con artifact 'kq-scanner-db' su nightly+weekly ==="
           PREV_RUN_ID=""
-          for RID in $(gh run list --workflow=weekly-fundamentals.yml --limit=30 \
-                         --json databaseId --jq '.[].databaseId'); do
+          # Lista run di ENTRAMBI i workflow, ordinati per data decrescente
+          RUN_IDS=$(
+            (gh run list --workflow=nightly-prices.yml       --limit=20 --json databaseId,createdAt
+             gh run list --workflow=weekly-fundamentals.yml  --limit=20 --json databaseId,createdAt) \
+              | jq -s 'add | sort_by(.createdAt) | reverse | .[].databaseId'
+          )
+          for RID in $RUN_IDS; do
+            RID=$(echo "$RID" | tr -d '"')
             if [[ "$RID" == "$CURRENT_RUN" ]]; then continue; fi
             if gh api "repos/$REPO/actions/runs/$RID/artifacts" \
                  --jq '.artifacts[] | select(.expired == false) | .name' 2>/dev/null \
-                 | grep -qx "kq-fundamentals-db"; then
+                 | grep -qx "kq-scanner-db"; then
               PREV_RUN_ID="$RID"
-              echo "→ Trovato run $RID con artifact 'kq-fundamentals-db'"
+              echo "→ Trovato run $RID con artifact 'kq-scanner-db'"
               break
             fi
           done
 
           if [[ -z "$PREV_RUN_ID" ]]; then
-            echo "Nessun artifact 'kq-fundamentals-db' trovato nei run precedenti."
-            echo "  (primo run con questa strategia, oppure artifact scaduti)"
+            echo "Nessun artifact 'kq-scanner-db' trovato (primo run unificato)."
             echo "restored=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "=== Download artifact dal run $PREV_RUN_ID ==="
-          gh run download "$PREV_RUN_ID" --name kq-fundamentals-db --dir ./_restored
+          gh run download "$PREV_RUN_ID" --name kq-scanner-db --dir ./_restored
 
-          echo "=== Struttura scaricata ==="
-          find ./_restored -type f | head -20
-
-          # Prova vari layout possibili (path preservato / flat)
-          if [[ -f ./_restored/pipeline/storage/db/kq_scanner.db ]]; then
-            mv ./_restored/pipeline/storage/db/kq_scanner.db \
-               pipeline/storage/db/kq_scanner.db
-          elif [[ -f ./_restored/kq_scanner.db ]]; then
-            mv ./_restored/kq_scanner.db pipeline/storage/db/kq_scanner.db
-          else
-            FOUND=$(find ./_restored -name 'kq_scanner.db' -type f | head -1)
-            if [[ -n "$FOUND" ]]; then
-              mv "$FOUND" pipeline/storage/db/kq_scanner.db
-            fi
-          fi
-
-          if [[ -f pipeline/storage/db/kq_scanner.db ]]; then
+          FOUND=$(find ./_restored -name 'kq_scanner.db' -type f | head -1)
+          if [[ -n "$FOUND" ]]; then
+            mv "$FOUND" pipeline/storage/db/kq_scanner.db
             echo "DB ripristinato (size: $(stat -c%s pipeline/storage/db/kq_scanner.db) bytes)"
             python - <<'PY'
           import sqlite3
           c = sqlite3.connect("pipeline/storage/db/kq_scanner.db")
-          for t in ["universe", "fundamentals_snapshot", "computed_metrics", "prices_daily"]:
+          for t in ["universe","fundamentals_snapshot","computed_metrics","prices_daily"]:
               try:
                   n = c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
                   print(f"  {t}: {n}")
@@ -141,7 +128,8 @@ jobs:
           PY
             echo "restored=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Artifact scaricato ma kq_scanner.db non trovato nei path attesi."
+            echo "Artifact scaricato ma kq_scanner.db non trovato."
+            find ./_restored -type f | head -20
             echo "restored=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -174,9 +162,13 @@ jobs:
       # --------------------------------------------------------------
       - name: Fetch fundamentals (per-ticker)
         env:
+          MODE: ${{ github.event.inputs.mode || 'incremental' }}
           EXCH: ${{ github.event.inputs.exchange || '' }}
         run: |
           ARGS="--per-ticker -v"
+          # mode=full → bypassa la safety rail (snapshot_count < soglia)
+          # e rifà l'intero universo. Necessario al PRIMO popolamento del DB.
+          if [[ "$MODE" == "full" ]]; then ARGS="$ARGS --force"; fi
           if [[ -n "$EXCH" ]]; then ARGS="$ARGS --exchange $EXCH"; fi
           echo "Running: python -m pipeline.fetch.fetch_fundamentals $ARGS"
           python -m pipeline.fetch.fetch_fundamentals $ARGS
@@ -240,13 +232,14 @@ jobs:
           print(f"Exported {len(out)} rows")
           PY
 
-      # Nome artifact FISSO: è l'unica fonte di persistenza DB tra run.
+      # Nome artifact FISSO `kq-scanner-db` — UNICO condiviso tra
+      # nightly-prices e weekly-fundamentals (unica fonte di persistenza DB).
       # `overwrite: true` permette a più run di sostituire lo stesso artifact.
-      - name: Upload DB artifact (stable name)
+      - name: Upload DB artifact (shared stable name)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kq-fundamentals-db
+          name: kq-scanner-db
           path: |
             fetch_log_tail.json
             pipeline/storage/db/kq_scanner.db
