@@ -439,50 +439,163 @@
     });
   }
 
-  /* ---- SEASONALITY heatmap ------------------------------------------- */
+  /* ---- SEASONALITY line chart ---------------------------------------- */
   function renderSeasonality(payload){
-    const hm = document.getElementById('heatmap');
+    const canvas = document.getElementById('seasonalityChart');
+    const metaHost = document.getElementById('seasonalityMeta');
     const s = payload.seasonality;
-    if(!hm) return;
+    if(!canvas) return;
     if(!s){
-      hm.innerHTML = '<div class="loading" style="grid-column:1 / -1">Dati stagionalità non disponibili.</div>';
+      canvas.parentElement.innerHTML =
+        '<div class="loading">Dati stagionalità non disponibili.</div>';
+      if(metaHost) metaHost.innerHTML = '';
       return;
     }
+
     const months = s.months || ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
-    const years  = s.years  || [];
-    const matrix = s.matrix || [];
+    /* Preferiamo i nuovi campi; fallback al vecchio matrix[AVG] se assenti. */
+    let avg = s.monthly_avg;
+    let det = s.monthly_avg_detrended;
+    const hit = s.monthly_hit_rate || [];
 
-    function color(v){
-      if(v === null || v === undefined) return 'var(--bg-card-elev)';
-      const pct = v * 100;
-      const a = Math.min(Math.abs(pct)/10, 1);
-      return pct >= 0 ? `rgba(16,185,129,${.15+a*0.55})` : `rgba(239,68,68,${.15+a*0.55})`;
+    if(!avg){
+      /* backward compat: l'ultima riga di matrix è AVG */
+      const mat = s.matrix || [];
+      if(mat.length){
+        avg = mat[mat.length - 1];
+      }
     }
-    function text(v){
-      if(v === null || v === undefined) return '·';
-      const pct = v * 100;
-      return (pct > 0 ? '+' : '') + pct.toFixed(1);
+    if(!avg){ return; }
+
+    /* Se manca detrended (JSON vecchio), lo calcoliamo lato client */
+    if(!det){
+      const nonNull = avg.filter(v => v !== null && v !== undefined);
+      const mean = nonNull.length ? nonNull.reduce((a,b)=>a+b,0)/nonNull.length : 0;
+      det = avg.map(v => (v === null || v === undefined) ? null : v - mean);
     }
 
-    const frags = [];
-    /* header row */
-    frags.push(`<div class="hm-header"></div>`);
-    months.forEach(m => frags.push(`<div class="hm-header">${m}</div>`));
-    /* body rows */
-    years.forEach((y, yi) => {
-      const isAvg = String(y).toUpperCase() === 'AVG';
-      const cls = isAvg ? 'hm-row-label hm-avg' : 'hm-row-label';
-      frags.push(`<div class="${cls}">${y}</div>`);
-      const row = matrix[yi] || [];
-      row.forEach(v => {
-        const cellCls = isAvg ? 'hm-cell hm-avg' : 'hm-cell';
-        const pct = v === null || v === undefined ? 0 : v*100;
-        const txtCol = v === null || v === undefined ? 'var(--text-muted)' :
-          (Math.abs(pct) > 4 ? '#fff' : 'var(--text-primary)');
-        frags.push(`<div class="${cellCls}" style="background:${color(v)};color:${txtCol}">${text(v)}</div>`);
-      });
+    /* Converti in % per leggibilità chart */
+    const avgPct = avg.map(v => v === null || v === undefined ? null : +(v*100).toFixed(2));
+    const detPct = det.map(v => v === null || v === undefined ? null : +(v*100).toFixed(2));
+    const hitPct = hit.map(v => v === null || v === undefined ? null : +(v*100).toFixed(1));
+
+    /* Colori barre hit rate: verdi se >50, rossi se <50 */
+    const hitColors = hitPct.map(v => {
+      if(v === null) return 'rgba(100,116,139,.15)';
+      return v >= 50 ? 'rgba(16,185,129,.28)' : 'rgba(239,68,68,.28)';
     });
-    hm.innerHTML = frags.join('');
+
+    /* ---- bullet summary in meta -------------------------------------- */
+    if(metaHost){
+      const nYears = s.n_years || (s.years ? s.years.length - 1 : null);
+      /* trova mese migliore / peggiore dalla detrendizzata */
+      let bestIdx = -1, worstIdx = -1;
+      let bestV = -Infinity, worstV = +Infinity;
+      detPct.forEach((v, i) => {
+        if(v === null) return;
+        if(v > bestV){ bestV = v; bestIdx = i; }
+        if(v < worstV){ worstV = v; worstIdx = i; }
+      });
+      const chips = [];
+      if(nYears) chips.push(`<span class="chip"><b>${nYears}</b> anni di storia</span>`);
+      if(bestIdx >= 0) chips.push(`<span class="chip">Mese migliore: <b>${months[bestIdx]}</b> (<span class="cell-pos">${bestV>=0?'+':''}${bestV.toFixed(2)}%</span> vs media)</span>`);
+      if(worstIdx >= 0) chips.push(`<span class="chip">Mese peggiore: <b>${months[worstIdx]}</b> (<span class="cell-neg">${worstV.toFixed(2)}%</span> vs media)</span>`);
+      if(K.isNum(s.overall_mean)) chips.push(`<span class="chip">Drift mensile medio: <b>${s.overall_mean>=0?'+':''}${(s.overall_mean*100).toFixed(2)}%</b></span>`);
+      metaHost.innerHTML = chips.join('');
+    }
+
+    /* ---- Chart.js ---------------------------------------------------- */
+    new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: months,
+        datasets: [
+          {
+            type: 'bar',
+            label: 'Hit rate (% anni positivi)',
+            data: hitPct,
+            backgroundColor: hitColors,
+            borderColor: 'transparent',
+            yAxisID: 'yHit',
+            order: 3,
+            borderRadius: 2,
+          },
+          {
+            type: 'line',
+            label: 'Media mensile',
+            data: avgPct,
+            borderColor: '#06b6d4',
+            backgroundColor: 'rgba(6,182,212,.12)',
+            borderWidth: 2.2,
+            pointRadius: 3.5,
+            pointHoverRadius: 5,
+            pointBackgroundColor: '#06b6d4',
+            tension: .3,
+            yAxisID: 'yRet',
+            order: 1,
+          },
+          {
+            type: 'line',
+            label: 'Detrendizzata (stagionalità pura)',
+            data: detPct,
+            borderColor: '#f59e0b',
+            backgroundColor: 'rgba(245,158,11,.06)',
+            borderDash: [6,4],
+            borderWidth: 2,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            pointBackgroundColor: '#f59e0b',
+            tension: .3,
+            yAxisID: 'yRet',
+            order: 2,
+            fill: false,
+          },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            display: true,
+            labels: { color: '#cbd5e1', font: { size: 11 }, usePointStyle: true, padding: 14 },
+          },
+          tooltip: {
+            backgroundColor:'#1a2235', titleColor:'#f1f5f9', bodyColor:'#cbd5e1',
+            borderColor:'#2a3550', borderWidth:1, padding:10,
+            callbacks: {
+              label: (ctx) => {
+                const v = ctx.parsed.y;
+                if(v === null || v === undefined) return ctx.dataset.label + ': —';
+                if(ctx.dataset.label && ctx.dataset.label.startsWith('Hit rate')){
+                  return ' Hit rate: ' + v.toFixed(1) + '%';
+                }
+                return ' ' + ctx.dataset.label + ': ' + (v>=0?'+':'') + v.toFixed(2) + '%';
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            ticks: { color:'#cbd5e1', font:{ size: 11 } },
+            grid:  { color: 'rgba(42,53,80,.3)' },
+          },
+          yRet: {
+            position: 'left',
+            ticks: { color:'#cbd5e1', callback: v => (v>=0?'+':'') + v + '%' },
+            grid:  { color: 'rgba(42,53,80,.3)' },
+            title: { display:true, text:'Return mensile (%)', color:'#64748b', font:{size:10}},
+          },
+          yHit: {
+            position: 'right',
+            min: 0, max: 100,
+            ticks: { color:'#64748b', callback: v => v + '%' },
+            grid:  { display: false },
+            title: { display:true, text:'Hit rate (%)', color:'#64748b', font:{size:10}},
+          },
+        },
+      },
+    });
   }
 
   /* ---- SCORES --------------------------------------------------------- */
